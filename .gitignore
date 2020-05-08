@@ -18,3 +18,5 @@
 # Executables
 *.exe
 *.out
+
+bin/

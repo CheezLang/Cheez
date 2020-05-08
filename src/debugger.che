@@ -34,10 +34,15 @@ use import scope
 use import string_database
 use import value
 
-LOG_PATH :: "D:/dev/CheezLang/data/logs/debugger_log.txt"
-
 Main :: () {
-    logger := FileLogger.new(LOG_PATH)
+    log_path := {
+        exe_path := try_with(fs.Path.get_current_executable_path(), "".to_owned())
+        containing := fs.Path.get_containing_directory(exe_path.slice())
+        fs.Path.concat(containing, "./logs/debugger_log.txt")
+    }
+
+    fs.create_directory(fs.Path.get_containing_directory(log_path.slice()))
+    logger := FileLogger.new(log_path.slice())
     // g_logger = cast ^logger.get()
     {
         l : ^Logger = ^*logger.get()
