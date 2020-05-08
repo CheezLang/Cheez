@@ -1,9 +1,9 @@
 use import std.string
 use import std.array
 
-use import compiler.ast
-
 fmt :: import std.fmt
+
+use import ast
 
 #export_scope
 
