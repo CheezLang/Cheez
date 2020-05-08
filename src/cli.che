@@ -49,6 +49,8 @@ Main :: () {
 
         MainCommand.Help -> io.println(get_help_message(@type_info(MainCommand)))
 
+        MainCommand.DumpTokens($file) -> dump_tokens(file.slice())
+
         // MainCommand.FindToken($options) -> find_tokens_of_type(^options)
     }
 }
@@ -79,6 +81,10 @@ MainCommand :: enum {
     // #name("find-tokens")
     // #help("Find all occurences of a specific token type in a file")
     // FindToken : CommandFindToken
+
+    #name("dump-tokens")
+    #help("Dump all tokens in the specified file")
+    DumpTokens : String
 }
 
 CommandCompile :: struct {
@@ -365,4 +371,22 @@ command_build :: (options: ^CommandBuild) {
     end := get_time_milliseconds()
     dur := end - start
     g_logger.log("[Compiler] Compilation took {} ms", [dur])
+}
+
+
+dump_tokens :: (file: string) {
+    string_db := StringDatabase.new()
+    match Lexer.from_file(file, &string_db) {
+        Ok($lexer) -> {
+            loop {
+                tok := lexer.get().next_token()
+                io.formatln("{}", [tok])
+                if tok.typ == .EOF then break
+            }
+        }
+
+        Err(_) -> {
+            io.formatln("File not found '{}'", [file])
+        }
+    }
 }
