@@ -1,0 +1,10 @@
+std :: import "std.che"
+pub basic1 :: import "basic_cheez.che"
+
+pub test :: () {
+    std.print_string("basic_cheez2")
+    basic1.test()
+
+    foo : basic1.Foo
+    foo.a = 5
+}
