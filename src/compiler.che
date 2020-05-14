@@ -580,6 +580,7 @@ Compiler :: struct {
     any_progress    := false
 
     mutex           : Mutex
+    threat_count    : int
     threads         : Array[Thread]
     active_threads  := 0
 
@@ -622,7 +623,8 @@ impl Compiler {
     new :: (thread_count: int, error_handler: ^ErrorHandler) -> Rc[Compiler] {
         comp := Rc[Compiler].new(Compiler(
             mutex           = Mutex.new()
-            threads         = Array[Thread].create()
+            thread_count    = thread_count
+            threads         = Array[Thread].create(thread_count)
 
             global_error_handler = error_handler
             string_database      = StringDatabase.new()
@@ -635,10 +637,6 @@ impl Compiler {
 
         // create main workspace
         comp.get().workspaces.add(Workspace.new(0, comp.get(), error_handler))
-
-        for 0..thread_count {
-            comp.get().threads.add(Thread.new(cast comp.get().thread_func))
-        }
 
         return comp
     }
@@ -693,8 +691,8 @@ impl Compiler {
 
 impl Compiler {
     start_compilation :: (&Self) {
-        for &threads {
-            it.start()
+        for 0..thread_count {
+            comp.get().threads.add(Thread.new(cast comp.get().thread_func))
         }
     }
 
@@ -715,13 +713,11 @@ impl Compiler {
         }
 
         data := mem.alloc(Data)
-        t := Thread.create(cast(Fn(^Data)) thread_func, data)
         *data = Data(
-            thread      = t
+            thread      = Thread.create(cast(Fn(^Data)) thread_func, data)
             callback    = callback
             compiler    = ^*self
         )
-        data.thread.start()
     }
 
     wait_for_threads :: (&Self) {
