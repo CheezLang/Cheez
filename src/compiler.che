@@ -143,7 +143,7 @@ FiberContext :: struct {
     fiber   : ^Fiber
     interp  : ^Interpreter
     job     : ^CompilationJob = null
-    thread  : int = -1
+    thread  : u64 = -1
 }
 
 
@@ -580,7 +580,7 @@ Compiler :: struct {
     any_progress    := false
 
     mutex           : Mutex
-    threat_count    : int
+    thread_count    : int
     threads         : Array[Thread]
     active_threads  := 0
 
@@ -692,7 +692,7 @@ impl Compiler {
 impl Compiler {
     start_compilation :: (&Self) {
         for 0..thread_count {
-            comp.get().threads.add(Thread.new(cast comp.get().thread_func))
+            threads.add(Thread.new(cast self.thread_func))
         }
     }
 
