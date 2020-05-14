@@ -597,6 +597,8 @@ Compiler :: struct {
 
     // 
     user_defined_builtins := Array[(name: string, symbol: Symbol)].create()
+
+    thread_func_ptr : Fn() = null
 }
 
 impl Drop for Compiler {
@@ -638,6 +640,7 @@ impl Compiler {
         // create main workspace
         comp.get().workspaces.add(Workspace.new(0, comp.get(), error_handler))
 
+        comp.get().thread_func_ptr = cast comp.get().thread_func;
         return comp
     }
 
@@ -692,7 +695,7 @@ impl Compiler {
 impl Compiler {
     start_compilation :: (&Self) {
         for 0..thread_count {
-            threads.add(Thread.new(cast self.thread_func))
+            threads.add(Thread.new(self.thread_func_ptr))
         }
     }
 
