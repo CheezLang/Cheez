@@ -36,6 +36,7 @@ use import value
 
 Main :: () {
     log_path := {
+        // @todo: don't put log files in get_current_executable_path() on linux 
         exe_path := try_with(fs.Path.get_current_executable_path(), "".to_owned())
         containing := fs.Path.get_containing_directory(exe_path.slice())
         fs.Path.concat(containing, "./logs/debugger_log.txt")

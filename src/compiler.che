@@ -724,7 +724,8 @@ impl Compiler {
     }
 
     wait_for_threads :: (&Self) {
-        handles := mem.alloc_raw(HANDLE, cast threads.get_length())
+        handles := mem.alloc_raw(ThreadHandle, cast threads.get_length())
+        
 
         for &threads {
             handles[it_index] = it.data.handle
