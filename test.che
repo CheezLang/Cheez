@@ -1,0 +1,91 @@
+use import std.os.linux
+
+util :: import std.util
+io :: import std.io
+mem :: import std.mem.allocator
+
+current_fiber : ^LinuxFiber = null
+
+guard :: () {
+    io.println("guard")
+    loop LinuxFiber.yield()
+}
+
+impl LinuxFiber {
+    new :: (func: fn(^void), data: ^void, stack_size: int = 1024 * 1024 * 4) -> ^LinuxFiber {
+        raw_mem := mem.alloc_raw(u8, cast @sizeof(LinuxFiber) + stack_size)
+        fiber := cast(^LinuxFiber) raw_mem
+        fiber.parent = null
+        fiber.data = data
+        fiber.stack_base = util.pointer_add(raw_mem, cast @sizeof(LinuxFiber) + stack_size)
+
+        stack_aligned := @bin_and(u64(fiber.stack_base), @bin_not(15u64))
+        fiber.rsp = stack_aligned - 32
+
+        guard_var := guard
+        *cast(^u64) fiber.rsp + 8 = *cast(^u64) ^guard_var
+        *cast(^u64) fiber.rsp = *cast(^u64) ^func
+
+        fiber.rdi = u64(data)
+
+        return fiber
+    }
+
+    free :: (fiber: ^LinuxFiber) {
+        mem.free(fiber)
+    }
+
+    yield :: () {
+        @assert(current_fiber != null and current_fiber.parent != null)
+        to := current_fiber.parent
+        from := current_fiber
+        current_fiber = to
+        switch_to_fiber(from, to)
+    }
+
+    resume :: (&Self) {
+        @assert(current_fiber != null)
+        self.parent = current_fiber
+        from := current_fiber
+        current_fiber = ^*self
+        switch_to_fiber(from, current_fiber)
+    }
+}
+
+test :: (data: ^int) {
+    io.formatln("[test] {}", [*data])
+    *data = 456
+
+    for 0..10 {
+        io.formatln("[test] {}", [it])
+        LinuxFiber.yield()
+    }
+    // switch_to_fiber(test_fiber, main_fiber)
+}
+
+main_fiber : ^LinuxFiber = null
+test_fiber : ^LinuxFiber = null
+
+Main :: () {
+    io.formatln("[main] creating fiber")
+
+    num := 123
+    io.formatln("num: {}", [num])
+
+    main_fiber = LinuxFiber.new(null, null)
+    defer LinuxFiber.free(main_fiber)
+    current_fiber = main_fiber
+
+    test_fiber = LinuxFiber.new(cast test, ^num)
+    defer LinuxFiber.free(test_fiber)
+
+    io.formatln("[main] running...")
+    // switch_to_fiber(main_fiber, test_fiber)
+    for 0 .. 15 {
+        io.formatln("[main] {}", [it])
+        test_fiber.resume()
+    }
+
+    io.formatln("[main] done")
+    io.formatln("num: {}", [num])
+}
