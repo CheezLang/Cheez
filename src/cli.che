@@ -337,9 +337,9 @@ command_build :: (options: ^CommandBuild) {
         Symbol.NativeFunc(NativeFunctionWrapper.new(
             cast(NativeFunction) (interp) => {
                 frame := interp.top_frame()
-                io.set_console_color(.Green, .Black)
+                io.set_console_foreground_color(.Green)
                 io.formatln("{}", [frame.get_arg(0, string)])
-                io.set_console_color(.White, .Black)
+                io.set_console_foreground_color(.White)
             },
             fn(string)
         ))
@@ -349,9 +349,9 @@ command_build :: (options: ^CommandBuild) {
         Symbol.NativeFunc(NativeFunctionWrapper.new(
             cast(NativeFunction) (interp) => {
                 frame := interp.top_frame()
-                io.set_console_color(.Green, .Black)
+                io.set_console_foreground_color(.Green)
                 io.format("{}", [frame.get_arg(0, string)])
-                io.set_console_color(.White, .Black)
+                io.set_console_foreground_color(.White)
             },
             fn(string)
         ))

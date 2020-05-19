@@ -85,12 +85,12 @@ impl ErrorHandler for ConsoleErrorHandler {
         error_count += 1
 
         if prefix != "" {
-            io.set_console_color(@bin_or(io.ConsoleColor.White, io.ConsoleColor.Bright), io.ConsoleColor.Black)
+            io.set_console_foreground_color(@bin_or(io.ConsoleColor.White, io.ConsoleColor.Bright))
             io.format("[{}] ", [prefix])
         }
-        io.set_console_color(@bin_or(io.ConsoleColor.Red, io.ConsoleColor.Bright), io.ConsoleColor.Black)
+        io.set_console_foreground_color(@bin_or(io.ConsoleColor.Red, io.ConsoleColor.Bright))
         io.formatln(message, args)
-        io.set_console_color(io.ConsoleColor.White, io.ConsoleColor.Black)
+        io.set_console_foreground_color(io.ConsoleColor.White)
     }
 
     report_error_at :: (&Self, location: Location, message: string, args: []^any = [], prefix: string = "", details: [](fmt: string, args: []^any) = []) {
@@ -99,14 +99,14 @@ impl ErrorHandler for ConsoleErrorHandler {
 
         error_count += 1
 
-        io.set_console_color(@bin_or(io.ConsoleColor.White, io.ConsoleColor.Bright), io.ConsoleColor.Black)
+        io.set_console_foreground_color(@bin_or(io.ConsoleColor.White, io.ConsoleColor.Bright))
         if prefix != "" {
             io.format("[{}] ", [prefix])
         }
         io.format("{}:{}:{}: ", [location.file, location.line, location.column])
-        io.set_console_color(@bin_or(io.ConsoleColor.Red, io.ConsoleColor.Bright), io.ConsoleColor.Black)
+        io.set_console_foreground_color(@bin_or(io.ConsoleColor.Red, io.ConsoleColor.Bright))
         io.formatln(message, args)
-        io.set_console_color(io.ConsoleColor.White, io.ConsoleColor.Black)
+        io.set_console_foreground_color(io.ConsoleColor.White)
 
         if do_print_location then print_location(location)
 
@@ -116,11 +116,11 @@ impl ErrorHandler for ConsoleErrorHandler {
     }
 
     print_details :: (&Self, details: [](fmt: string, args: []^any)) {
-        io.set_console_color(@bin_or(io.ConsoleColor.Red, io.ConsoleColor.Green, io.ConsoleColor.Bright), io.ConsoleColor.Black)
+        io.set_console_foreground_color(@bin_or(io.ConsoleColor.Red, io.ConsoleColor.Green, io.ConsoleColor.Bright))
         for detail in details {
             io.formatln(detail.fmt, detail.args)
         }
-        io.set_console_color(io.ConsoleColor.White, io.ConsoleColor.Black)
+        io.set_console_foreground_color(io.ConsoleColor.White)
     }
 
     print_location :: (&Self, location: Location) {
@@ -200,13 +200,13 @@ impl ErrorHandler for ConsoleErrorHandler {
                 }
 
                 print_line_number(line, max_line_digits)
-                io.set_console_color(code_color_normal, io.ConsoleColor.Black)
+                io.set_console_foreground_color(code_color_normal)
                 io.print(sub1)
-                io.set_console_color(@bin_or(code_color_error, io.ConsoleColor.Bright), io.ConsoleColor.Black)
+                io.set_console_foreground_color(@bin_or(code_color_error, io.ConsoleColor.Bright))
                 io.print(sub2)
-                io.set_console_color(code_color_normal, io.ConsoleColor.Black)
+                io.set_console_foreground_color(code_color_normal)
                 io.print(sub3)
-                io.set_console_color(io.ConsoleColor.White, io.ConsoleColor.Black)
+                io.set_console_foreground_color(io.ConsoleColor.White)
                 io.println("")
 
                 index = line_range.end + 1
