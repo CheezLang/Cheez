@@ -1,91 +1,69 @@
-use import std.os.linux
+use import std.array
 
 util :: import std.util
 io :: import std.io
 mem :: import std.mem.allocator
+fs :: import std.io.fs
+clap :: import clap.clap
 
-current_fiber : ^LinuxFiber = null
-
-guard :: () {
-    io.println("guard")
-    loop LinuxFiber.yield()
-}
-
-impl LinuxFiber {
-    new :: (func: fn(^void), data: ^void, stack_size: int = 1024 * 1024 * 4) -> ^LinuxFiber {
-        raw_mem := mem.alloc_raw(u8, cast @sizeof(LinuxFiber) + stack_size)
-        fiber := cast(^LinuxFiber) raw_mem
-        fiber.parent = null
-        fiber.data = data
-        fiber.stack_base = util.pointer_add(raw_mem, cast @sizeof(LinuxFiber) + stack_size)
-
-        stack_aligned := @bin_and(u64(fiber.stack_base), @bin_not(15u64))
-        fiber.rsp = stack_aligned - 32
-
-        guard_var := guard
-        *cast(^u64) fiber.rsp + 8 = *cast(^u64) ^guard_var
-        *cast(^u64) fiber.rsp = *cast(^u64) ^func
-
-        fiber.rdi = u64(data)
-
-        return fiber
-    }
-
-    free :: (fiber: ^LinuxFiber) {
-        mem.free(fiber)
-    }
-
-    yield :: () {
-        @assert(current_fiber != null and current_fiber.parent != null)
-        to := current_fiber.parent
-        from := current_fiber
-        current_fiber = to
-        switch_to_fiber(from, to)
-    }
-
-    resume :: (&Self) {
-        @assert(current_fiber != null)
-        self.parent = current_fiber
-        from := current_fiber
-        current_fiber = ^*self
-        switch_to_fiber(from, current_fiber)
-    }
-}
-
-test :: (data: ^int) {
-    io.formatln("[test] {}", [*data])
-    *data = 456
-
-    for 0..10 {
-        io.formatln("[test] {}", [it])
-        LinuxFiber.yield()
-    }
-    // switch_to_fiber(test_fiber, main_fiber)
-}
-
-main_fiber : ^LinuxFiber = null
-test_fiber : ^LinuxFiber = null
+use import std.process
 
 Main :: () {
-    io.formatln("[main] creating fiber")
+    // arr := Array[int].create()
+    // io.formatln("{}", [arr])
+    // arr.add_slice([1, 2, 3])
+    // io.formatln("{}", [arr])
+    // arr.add_slice([4, 5, 6, 7, 8, 9])
+    // io.formatln("{}", [arr])
 
-    num := 123
-    io.formatln("num: {}", [num])
+    cmd_line_args_bin := fs.read_file_binary("/proc/self/cmdline")
+    io.formatln("args: {}", [cmd_line_args_bin.Ok])
 
-    main_fiber = LinuxFiber.new(null, null)
-    defer LinuxFiber.free(main_fiber)
-    current_fiber = main_fiber
+    cmd_line_args := clap.get_cmd_args()
+    io.formatln("args: '{}'", [cmd_line_args])
 
-    test_fiber = LinuxFiber.new(cast test, ^num)
-    defer LinuxFiber.free(test_fiber)
+    // path := ""
+    // full_path := try_with(fs.get_full_path(path), {return})
+    // io.formatln("wd: {}", [full_path])
 
-    io.formatln("[main] running...")
-    // switch_to_fiber(main_fiber, test_fiber)
-    for 0 .. 15 {
-        io.formatln("[main] {}", [it])
-        test_fiber.resume()
-    }
-
-    io.formatln("[main] done")
-    io.formatln("num: {}", [num])
+    // result := run_process("ls", ["-l", "-a"], full_path.slice())
+    // io.formatln("run_process -> {}", [result])
 }
+
+// use import std.fiber
+
+// util :: import std.util
+// io :: import std.io
+// mem :: import std.mem.allocator
+
+// test :: (data: ^int) {
+//     io.formatln("[test] {}", [*data])
+//     *data = 456
+
+//     for 0..10 {
+//         io.formatln("[test] {}", [it])
+//         Fiber.yield()
+//     }
+//     // switch_to_fiber(test_fiber, main_fiber)
+// }
+
+// Main :: () {
+//     io.formatln("[main] creating fiber")
+
+//     num := 123
+//     io.formatln("num: {}", [num])
+
+//     Fiber.init()
+
+//     test_fiber := Fiber.new(cast(Fn(^int)) test, ^num)
+//     // defer Fiber.free(test_fiber)
+
+//     io.formatln("[main] running...")
+//     for 0 .. 15 {
+//         io.formatln("[main] {}", [it])
+//         test_fiber.resume()
+//     }
+
+//     io.formatln("[main] done")
+//     io.formatln("num: {}", [num])
+// }

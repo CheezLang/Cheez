@@ -5,15 +5,19 @@ use import std.map
 use import std.mem.arena_allocator
 use import std.mem.bump_allocator
 use import std.mem.std_heap_allocator
-use import std.os.windows_constants
-use import std.os.windows_functions
-use import std.os.windows_types
 use import std.printable
 use import std.rc
 use import std.ring_queue
 use import std.string
 use import std.thread
 use import std.time
+
+if const @is_os("windows") {
+    use import std.os.windows
+    use import std.os.windows_constants
+    use import std.os.windows_functions
+    use import std.os.windows_types
+}
 
 mem :: import std.mem.allocator
 C   :: import std.c
@@ -724,13 +728,21 @@ impl Compiler {
     }
 
     wait_for_threads :: (&Self) {
-        handles := mem.alloc_raw(ThreadHandle, cast threads.get_length())
-        
+        if const @is_os("windows") {
+            handles := mem.alloc_raw(ThreadHandle, cast threads.get_length())
 
-        for &threads {
-            handles[it_index] = it.data.handle
+            for &threads {
+                handles[it_index] = it.data.handle
+            }
+
+            WaitForMultipleObjects(cast threads.get_length(), handles, 1, INFINITE)
         }
-        WaitForMultipleObjects(cast threads.get_length(), handles, 1, INFINITE)
+
+        if const @is_os("linux") {
+            for &threads {
+                it.join()
+            }
+        }
     }
 
     wait_until_done :: (&Self) {

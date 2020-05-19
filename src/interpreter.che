@@ -631,8 +631,10 @@ impl Interpreter {
             .Mod -> {
                 typ := arg(InstNumTyp)
                 match typ {
-                    .F32 -> set(f32, -1, peek(f32, -1) % peek(f32, 0))
-                    .F64 -> set(f64, -1, peek(f64, -1) % peek(f64, 0))
+                    .F32 -> set(f32, -1, cast(f32) int(peek(f32, -1)) % int(peek(f32, 0)))
+                    .F64 -> set(f64, -1, cast(f64) int(peek(f64, -1)) % int(peek(f64, 0)))
+                    // .F32 -> set(f32, -1, peek(f32, -1) % peek(f32, 0)) // @todo
+                    // .F64 -> set(f64, -1, peek(f64, -1) % peek(f64, 0)) // @todo
                     .I8  -> set(i8,  -1, peek(i8,  -1) % peek(i8,  0))
                     .I16 -> set(i16, -1, peek(i16, -1) % peek(i16, 0))
                     .I32 -> set(i32, -1, peek(i32, -1) % peek(i32, 0))

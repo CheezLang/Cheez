@@ -4,12 +4,18 @@ use import std.hash_table
 use import std.map
 use import std.math
 use import std.mem.std_heap_allocator
-use import std.os.windows
-use import std.os.windows_functions
 use import std.rc
 use import std.ring_queue
 use import std.string
 use import std.thread
+
+
+if const @is_os("windows") {
+    use import std.os.windows
+    use import std.os.windows_constants
+    use import std.os.windows_functions
+    use import std.os.windows_types
+}
 
 fmt  :: import std.fmt
 fs   :: import std.io.fs
