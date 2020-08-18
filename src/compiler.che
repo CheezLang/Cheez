@@ -45,6 +45,7 @@ enable_profiler :: false
 
 #export_scope
 
+CHEEZ_FILE_EXTENSION :: ".cheez"
 
 wait_until :: (cond: Code, on_error: Code, on_yield: Code = {}, on_resume: Code = {}) #macro {
     fiber_context := Fiber.user_data(FiberContext)
@@ -244,7 +245,7 @@ impl Workspace {
         ))
 
         // @todo: make these paths not absolute
-        string_sources_file := fmt.format("string_sources_{}.che", [id])
+        string_sources_file := fmt.format("string_sources_{}{}", [id, CHEEZ_FILE_EXTENSION])
         workspace.get().string_sources_file = match fs.get_full_path(string_sources_file.slice()) {
             Ok($path) -> path
             Err(_) -> string_sources_file.clone()

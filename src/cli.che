@@ -67,7 +67,7 @@ MainCommand :: enum {
     Compile : CommandCompile
 
     #name("build")
-    #help("Build a project using a build script (default: build.che)")
+    #help("Build a project using a build script (default: build.cheez)")
     Build : CommandBuild
 
     #name("project")
@@ -88,8 +88,8 @@ MainCommand :: enum {
 }
 
 CommandCompile :: struct {
-    #help("List of files to compile (.che extension optional)
-e.g. ... compile foo.che bar.che
+    #help("List of files to compile (.cheez extension optional)
+e.g. ... compile foo.cheez bar.cheez
 e.g. ... compile foo bar")
     files : Array[String]
 
@@ -127,7 +127,7 @@ CommandProject :: enum {
 }
 
 CommandRun :: struct {
-    #help("File to run. Can be a source file (.che) or bytecode file (.cheb)")
+    #help("File to run. Can be a source file (.cheez) or bytecode file (.cheezb)")
     file : String
 }
 
@@ -256,7 +256,7 @@ Main :: () ``{
                 [options.name.slice()],
 "[CmdletBinding()]
 param ([Parameter(ValueFromRemainingArguments)] [string[]] $Passthrough)
-^cheezc ./src/main.che --out ./bin --name {} --time @Passthrough",
+&cheezc ./src/main.che --out ./bin --name {} --time @Passthrough",
                 [options.name.slice()])
 
     if !options.no_git {
@@ -317,7 +317,7 @@ command_build :: (options: ^CommandBuild) {
             return
         }
     }
-    build_file := fmt.format("{}/build.che", [wd.slice()])
+    build_file := fmt.format("{}/build.cheez", [wd.slice()])
     main_workspace.get().create_and_add_job(LoadFileJob.new(build_file))
 
     //

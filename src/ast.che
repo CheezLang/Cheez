@@ -82,6 +82,11 @@ AstImpl :: struct AstNode {
     target_expr : &AstNode
     trait_expr  : ^AstNode
     children    : Array[^AstNode]
+
+    functions   := Array[^AstFunction].new(0)
+    sub_scope   : ^Scope = null
+    
+    children_done := false // is true when all jobs for the children of this impl block are done
 }
 impl AstNode for AstImpl {}
 

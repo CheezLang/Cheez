@@ -197,6 +197,24 @@ validate_node :: (node: &AstNode, error_handler: ^ErrorHandler) -> bool {
             }
         }
 
+        AstImpl($node) -> {
+            assert("AstImport", node.typ != null)
+
+            if !validate_node(node.target_expr, error_handler) {
+                return false
+            }
+
+            if node.trait_expr != null and !validate_node(&*node.trait_expr, error_handler) {
+                return false
+            }
+
+            for(by_ref=false) child in &node.children {
+                if !validate_node(&*child, error_handler) {
+                    return false
+                }
+            }
+        }
+
         AstImport($node) -> {
             assert("AstImport", node.typ != null)
             // if !validate_node(node.path, error_handler) {

@@ -1,5 +1,5 @@
-std :: import "std.che"
-pub basic1 :: import "basic_cheez.che"
+std :: import "std.cheez"
+pub basic1 :: import "basic_cheez.cheez"
 
 pub test :: () {
     std.print_string("basic_cheez2")

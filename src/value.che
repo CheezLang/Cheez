@@ -22,6 +22,21 @@ Value :: enum #copy {
     Module      : ^SourceFile
 }
 
+impl Value {
+    as_type :: (&Self) -> ^TypeInfo {
+        return match self {
+            .Type($ti) -> *ti
+            _ -> @assert(false)
+        }
+    }
+    as_module :: (&Self) -> ^SourceFile {
+        return match self {
+            .Module($sf) -> *sf
+            _ -> @assert(false)
+        }
+    }
+}
+
 NativeFunction :: Fn(^Interpreter)
 
 NativeFunctionWrapper2 :: fn(fn(), ^Interpreter)

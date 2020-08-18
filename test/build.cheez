@@ -1,9 +1,9 @@
-std :: import "std.che"
+std :: import "std.cheez"
 
 _ :: build()
 build :: () {
     std.print_string("build()")
     compiler := _get_compiler()
     ws := compiler.create_workspace()
-    job := ws.add_load_file_job("basic_cheez.che")
+    job := ws.add_load_file_job("basic_cheez.cheez")
 }

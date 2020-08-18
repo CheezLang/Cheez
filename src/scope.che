@@ -1,5 +1,6 @@
 use import std.map
 use import std.thread
+use import std.array
 
 fmt :: import std.fmt
 io  :: import std.io
@@ -14,9 +15,11 @@ use import compiler
 #export_scope
 
 Scope :: struct {
-    parent      : ^Scope
-    symbols     := Map[string, Symbol].new()
-    mutex       := Option[Mutex].None
+    parent          : ^Scope
+    symbols         := Map[string, Symbol].new()
+    impls           := Option[Array[^AstImpl]].None
+    type_impl_map   := Option[Map[TypeId, Array[^AstImpl]]].None
+    mutex           := Option[Mutex].None
 
     // if true, this scope is for code executed at compile time
     // and thus can only access constant values from parent scopes
@@ -171,6 +174,61 @@ impl Scope {
                 return sym
             }
         }
+    }
+
+    register_impl :: (&Self, imp: ^AstImpl) {
+        if self.impls == .None {
+            self.impls = Some(Array[^AstImpl].new())
+        }
+
+        @assert(self.impls == .Some)
+        self.impls.Some.add(imp)
+    }
+
+    add_impl_for_type :: (&Self, imp: ^AstImpl) {
+        if self.type_impl_map == .None {
+            self.type_impl_map = Some(Map[TypeId, Array[^AstImpl]].new())
+        }
+
+        @assert(self.type_impl_map == .Some)
+
+        type_id := imp.target_expr.typ.id()
+        arr : &Array[^AstImpl] = self.type_impl_map.Some.get_or_insert(type_id, () => Array[^AstImpl].new(initial_capacity=1))
+        arr.add(imp)
+    }
+
+    get_impls :: (&Self, typ: ^TypeInfo) -> ScopeImplIterator {
+        return ScopeImplIterator(typ, self)
+    }
+}
+
+ScopeImplIterator :: struct {
+    typ: ^TypeInfo
+    scope: &Scope
+}
+
+for_extension_ScopeImplIterator :: (iter: ScopeImplIterator, code: Code) #for {
+    scope := ^*iter.scope
+    it_index := 0
+    while scope != null #label outer_loop {
+        match &scope.type_impl_map {
+            Some($map) -> {
+                @static_assert(@typeof(map) == &Map[TypeId, Array[^AstImpl]])
+                for kv, _ in map {
+                    if kv.key.type_info() == iter.typ {
+                        type_impl_map : &Array[^AstImpl] = kv.value
+                        for(by_ref=false) it in type_impl_map {
+                            @static_assert(@typeof(it) == ^AstImpl)
+                            @insert(code, _break=@link(break outer_loop), _continue=@link(continue))
+                            it_index += 1
+                        }
+                    }
+                }
+            }
+            None -> {}
+        }
+
+        scope = scope.parent
     }
 }
 

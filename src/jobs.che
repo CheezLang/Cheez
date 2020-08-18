@@ -316,8 +316,12 @@ impl CompilationJob for LoadFileJob {
                     }
                 }
 
-                for node in &file.nodes {
-                    workspace.add_job(workspace.create_job(CompileGlobalNodeJob.new(*node)))
+                for(by_ref=false) node in &file.nodes {
+                    match node {
+                        AstImpl($imp) -> node.scope.register_impl(imp)
+                        _ -> {}
+                    }
+                    workspace.add_job(workspace.create_job(CompileGlobalNodeJob.new(node)))
                 }
             }}
         }
@@ -487,6 +491,7 @@ impl CompileNode {
             AstFunction($func)      -> compile_function(func, ctx)
             AstIdentifier($id)      -> compile_identifier(id, ctx)
             AstIf($iff)             -> compile_if(iff, ctx)
+            AstImpl($imp)           -> compile_impl(imp, ctx)
             AstImport($imp)         -> compile_import(imp, ctx)
             AstIndex($index)        -> compile_index(index, ctx)
             AstLoop($lop)           -> compile_loop(lop, ctx)
@@ -626,9 +631,98 @@ impl CompileNode {
                 return dot
             }
 
+            TypeInfoType($ti) -> {
+                typ := dot.sub.value.as_type()
+                g_logger.log("[compile_dot] {}.{}", [typ, dot.name.name])
+                for imp in dot.scope.get_impls(typ) {
+                    g_logger.log("impl at {}", [imp.location])
+                }
+
+                impl_func : ^AstFunction = null
+                scope := dot.scope
+                while scope != null #label outer_loop {
+                    match &scope.impls {
+                        Some($impls) -> {
+
+                            for(by_ref=false) imp in impls {
+                                wait_until(imp.target_expr.typ != null, {
+                                    workspace.error_handler.report_error_at(dot.location, "Should this error happen?")
+                                })
+
+                                g_logger.log("[compile_dot] checking {} matches impl type {}", [typ, imp.target_expr.value.as_type()])
+                                if !typ.matches_pattern(imp.target_expr.value.as_type()) then continue
+
+                                // find function
+                                for(by_ref=false) func in &imp.functions {
+                                    g_logger.log("[compile_dot] checking function {}", [func.name])
+                                    if dot.name.name == func.name {
+                                        // found matching function
+                                        g_logger.log("[compile_dot] {} matches", [func.name])
+                                        impl_func = func
+                                        break outer_loop
+                                    }
+                                }
+                            }
+
+                        }
+
+                        None -> {
+
+                        }
+                    }
+
+                    scope = scope.parent
+                }
+
+                g_logger.log("[compile_dot] checking if function was found")
+                if impl_func == null {
+                    workspace.error_handler.report_error_at(dot.location, "No function '{}' implemented for type {}", [dot.name.name, typ])
+                    poison(dot)
+                    return dot
+                }
+
+                g_logger.log("[compile_dot] waiting until function is done")
+                wait_until(impl_func.typ != null, {
+                    workspace.error_handler.report_error_at(dot.location, "Type of function could not be calculated")
+                    poison(dot)
+                    return dot
+                })
+
+                g_logger.log("[compile_dot] function is done {}", [impl_func.typ])
+                dot.typ = impl_func.typ
+                dot.value = .Function(impl_func)
+
+                // match &dot.scope.type_impl_map {
+                //     Some($map) -> {
+                //         // impls are cached
+                //         g_logger.log("[compile_dot] searching for function in scope.type_impl_map")
+                //     }
+
+                //     None -> {
+                //         // impls are not cached yet
+                //         g_logger.log("[compile_dot] computing impls for types in scope")
+                        
+                //         scope := dot.scope.parent
+                //         while scope != null {
+                //             // check if impls are already cached
+                //             match &scope.type_impl_map {
+                //                 Some($map) -> {
+
+                //                 }
+
+                //                 None -> {
+
+                //                 }
+                //             }
+                //         }
+                //     }
+                // }
+
+                return dot
+            }
+
             TypeInfoModule(_) -> {
-                @assert(dot.sub.value == .Module)
-                file := dot.sub.value.Module
+                file := dot.sub.value.as_module()
 
                 dot.name.scope = file.global_scope
                 AstNode.set_flags(dot.name, .OnlyPubDeclarations)
@@ -638,7 +732,7 @@ impl CompileNode {
             }
 
             _ -> {
-                workspace.error_handler.report_error_at(dot.sub.location, "Invalid type on left size of '.': '{}'", [dot.sub.typ])
+                workspace.error_handler.report_error_at(dot.sub.location, "Invalid type on left side of '.': '{}'", [dot.sub.typ])
                 poison(dot)
                 return dot
             }
@@ -1192,6 +1286,94 @@ impl CompileNode {
         return iff
     }
 
+    compile_impl :: (&Self, node: &AstImpl, ctx: CNContext) -> &AstNode {
+        node.target_expr.scope = node.scope
+        compile_node(node.target_expr, ctx.with_expected(@type_info(type)))
+        handle_poison(node, node.target_expr)
+
+        // check if node.target_expr is type
+        if node.target_expr.typ != @type_info(type) {
+            workspace.error_handler.report_error_at(
+                node.target_expr.location,
+                "Target of impl block must be a type, found {}",
+                [node.target_expr.typ]
+            )
+            poison(node)
+            return node
+        }
+
+        if node.trait_expr != null {
+            node.trait_expr.scope = node.scope
+            compile_node(&*node.trait_expr, ctx.with_expected(@type_info(type)))
+            handle_poison(node, node.trait_expr)
+        }
+
+
+        // register this impl in the current scope
+        if node.trait_expr == null {
+            g_logger.log("[compile_impl] adding to scope")
+            node.scope.add_impl_for_type(^*node)
+        }
+
+        node.sub_scope = workspace.new_scope(node.scope)
+        node.functions.reserve(node.children.count())
+        jobs := Array[^CompilationJob].create()
+
+        for(by_ref=false) child in &node.children {
+            child.scope = node.sub_scope
+            child.set_flags(.AllowPubModifier)
+
+            match child {
+                AstConstDecl($decl) -> {
+                    g_logger.log("[compile_impl] found const decl")
+                    name := "#anonymous"
+                    match decl.pattern {
+                        AstIdentifier($id) -> {
+                            name = id.name
+                        }
+
+                        _ -> {
+                            workspace.error_handler.report_error_at(child.location, "Only identifier allowed here")
+                            poison(&*decl)
+                            continue
+                        }
+                    }
+
+                    match decl.value_expr {
+                        AstFunction($func) -> {
+                            g_logger.log("[compile_impl] adding function")
+                            func.name = name
+                            node.functions.add(func)
+
+                            job := workspace.create_job(CompileGlobalNodeJob.new(decl))
+                            jobs.add(job)
+                            workspace.add_job(job)
+                        }
+
+                        _ -> {
+                            workspace.error_handler.report_error_at(child.location, "TODO: not implemented")
+                        }
+                    }
+                }
+
+                _ -> {
+                    workspace.error_handler.report_error_at(child.location, "This type of expression is not allowed here")
+                    poison(&*child)
+                }
+            }
+        }
+
+        for job in &jobs {
+            wait_until(job.done, {
+                // nothing to see here...
+            })
+        }
+        node.children_done = true
+
+        node.typ = @type_info(void)
+        return node
+    }
+
     compile_import :: (&Self, node: &AstImport, ctx: CNContext) -> &AstNode {
         match node.path {
             AstString($str) -> {
@@ -1661,6 +1843,8 @@ impl CompileNode {
                 }
                 call.arguments = new_args
             }
+            
+            _ -> {}
         }
 
         {
@@ -2034,7 +2218,6 @@ impl CompileNode {
                 }
             }
 
-
             // set name of value expr if its a function or struct/trait/enum
             match decl.value_expr {
                 AstFunction($func) -> {
@@ -2165,5 +2348,9 @@ impl TypeInfo {
 
             _ -> false
         }
+    }
+
+    matches_pattern :: (&Self, pattern: ^TypeInfo) -> bool {
+        return TypeInfo.same(^*self, pattern)
     }
 }

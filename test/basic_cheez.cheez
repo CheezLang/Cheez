@@ -1,0 +1,16 @@
+std :: import "std.cheez"
+
+pub Foo :: struct {
+    a : int
+}
+
+impl Foo {
+    foo :: () {
+        std.print_string("Foo.foo()")
+    }
+}
+
+_ :: Main()
+Main :: () {
+    Foo.foo()
+}
