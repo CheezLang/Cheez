@@ -141,6 +141,31 @@ impl CodeGenerator for ByteCodeGenerator {
         }
     }
 
+    generate_value :: (&Self, value: &Value) {
+        match value {
+            .Bool($val) -> {
+                builder.build_const_int(if *val then 1 else 0)
+            }
+
+            .Int($val) -> {
+                builder.build_const_int(*val)
+            }
+
+            .Float($val) -> {
+                builder.build_const_float(*val)
+            }
+
+            .String($val) -> {
+                builder.build_const_int(cast val.bytes.length)
+                builder.build_const_int(cast val.bytes.data)
+            }
+
+            _ -> {
+                @assert(false, "TODO: not implemented (generate_value)")
+            }
+        }
+    }
+
     generate_const_decl :: (&Self, decl: &AstConstDecl) {
         // do nothing
     }
@@ -476,6 +501,10 @@ impl CodeGenerator for ByteCodeGenerator {
                 } else {
                     // pointer is already on top of stack
                 }
+            }
+
+            TypeInfoType($ti) -> {
+                generate_value(&dot.value)
             }
 
             _ -> {

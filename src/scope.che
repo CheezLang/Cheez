@@ -130,6 +130,10 @@ impl Scope {
         return Ok()
     }
 
+    get_symbol_local :: (&Self, name: string) -> Option[&Symbol] {
+        return symbols.get(name)
+    }
+
     get_symbol :: (&Self, name: string, only_public: bool = false) -> Symbol {
         if parent == null {
             self.lock()
@@ -174,6 +178,38 @@ impl Scope {
                 return sym
             }
         }
+    }
+
+    get_impl_symbol :: (&Self, typ: ^TypeInfo, name: string) -> Option[Symbol] {
+        scope := ^*self
+        while scope != null #label outer_loop {
+            match &scope.impls {
+                Some($impls) -> {
+                    for(by_ref=false) imp in impls {
+                        wait_until(imp.target_expr.typ != null, {
+                            // workspace.error_handler.report_error_at(dot.location, "Should this error happen?")
+                            g_logger.log("[get_impl_symbol] Should this error happen?")
+                        })
+
+                        if !typ.matches_pattern(imp.target_expr.value.as_type()) then continue
+
+                        match imp.sub_scope.get_symbol_local(name) {
+                            Some($symbol) -> {
+                                return Some(*symbol)
+                            }
+
+                            None -> {}
+                        }
+                    }
+                }
+
+                None -> {}
+            }
+
+            scope = scope.parent
+        }
+
+        return None
     }
 
     register_impl :: (&Self, imp: ^AstImpl) {
@@ -233,8 +269,8 @@ for_extension_ScopeImplIterator :: (iter: ScopeImplIterator, code: Code) #for {
 }
 
 Symbol :: enum #copy {
-    Poison
     NotFound
+    Poison
     Private         : ^AstNode
     Decl            : ^AstDecl
     ConstDecl       : ^AstConstDecl
@@ -243,6 +279,7 @@ Symbol :: enum #copy {
     NativeFunc      : ^NativeFunctionWrapper
     NativeFunc2     : NativeFunctionWrapper2
     StructMember    : ^TypeInfoStructMember
+    OriginalNode    : &AstNode
 }
 
 #file_scope

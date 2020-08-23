@@ -306,12 +306,10 @@ impl CompilationJob for LoadFileJob {
 
                     match node {
                         AstConstDecl($decl) -> {
-                            define_const_decl(&*decl)
-                            AstNode.set_flags(&*decl, .IsDefinedInScope)
+                            define_const_decl(&*decl, &*self.workspace)
                         }
                         AstDecl($decl) -> {
-                            define_decl(&*decl)
-                            AstNode.set_flags(&*decl, .IsDefinedInScope)
+                            define_decl(&*decl, &*self.workspace)
                         }
                     }
                 }
@@ -327,65 +325,6 @@ impl CompilationJob for LoadFileJob {
         }
 
         debug_log("Done")
-    }
-
-    define_decl :: (&Self, decl: &AstDecl) {
-        decl.name = match &*decl.pattern {
-            AstIdentifier($id) -> id.name
-            _ -> {
-                workspace.error_handler.report_error_at(decl.location, "Non-identifier patterns not implemented yet")
-                return
-            }
-        }
-
-        // define symbol but only if not _
-        if decl.name != "_" {
-            match decl.scope.define_decl(decl.name, decl) {
-                Err() -> {
-                    workspace.error_handler.report_error_at(decl.pattern.location, "A symbol with this name already exists in this scope")
-                }
-            }
-        }
-    }
-
-    define_const_decl :: (&Self, decl: &AstConstDecl) {
-        decl.value_expr.scope = decl.scope
-
-        name := match decl.pattern {
-            AstIdentifier($id) -> id.name
-            _ -> {
-                workspace.error_handler.report_error_at(decl.location, "Non-identifier patterns not implemented yet")
-                return
-            }
-        }
-
-        // set name of value expr if its a function or struct/trait/enum
-        match decl.value_expr {
-            AstFunction($func) -> {
-                func.name = name
-            }
-            AstStruct($str) -> {
-                str.name = name
-            }
-            AstEnum($en) -> {
-                en.name = name
-            }
-            AstTrait($tr) -> {
-                tr.name = name
-            }
-            AstPoly($poly) -> {
-                poly.name = name
-            }
-        }
-
-        // define symbol but only if not _
-        if name != "_" {
-            match decl.scope.define_const_decl(name, decl) {
-                Err() -> {
-                    workspace.error_handler.report_error_at(decl.pattern.location, "A symbol with this name already exists in this scope")
-                }
-            }
-        }
     }
 }
 
@@ -518,6 +457,34 @@ impl CompileNode {
         // return result
     }
 
+    get_type_and_value_of_symbol :: (symbol: &Symbol) -> (typ: ^TypeInfo, value: Value) {
+        return match symbol {
+            .Val($value) -> value.typ, value.value
+
+            .ConstDecl($decl) -> {
+                wait_until(decl.value_expr.value != .None and decl.value_expr.typ != null, {
+                    @assert(false, "Should not happen?")
+                })
+                // @todo: get type of type expr if available
+                decl.value_expr.typ, decl.value_expr.value
+            }
+
+            .Decl($decl) -> {
+                wait_until(decl.var_type != null, {
+                    @assert(false, "Should not happen?")
+                })
+                decl.var_type, Value.None
+            }
+
+            .NativeFunc($func) -> cast func.function_type, Value.NativeFunc(*func)
+
+            $sym -> {
+                @assert(false, "Should not happen?")
+                null, Value.None
+            }
+        }
+    }
+
     compile_dot :: (&Self, dot: &AstDot, ctx: CNContext) -> &AstNode {
         if dot.sub == null {
             workspace.error_handler.report_error_at(dot.location, "compile_dot: anonymous not implemented")
@@ -633,92 +600,76 @@ impl CompileNode {
 
             TypeInfoType($ti) -> {
                 typ := dot.sub.value.as_type()
-                g_logger.log("[compile_dot] {}.{}", [typ, dot.name.name])
-                for imp in dot.scope.get_impls(typ) {
-                    g_logger.log("impl at {}", [imp.location])
+
+                symbol : Option[Symbol] = None
+                match AstNode.get_original_symbol(&*dot.sub) {
+                    Some($original_symbol) -> match original_symbol {
+                        .OriginalNode($node) -> {
+                            symbol = node.scope.get_impl_symbol(typ, dot.name.name)
+                        }
+
+                        _ -> @assert(false)
+                    }
+                    None -> {}
                 }
 
-                impl_func : ^AstFunction = null
-                scope := dot.scope
-                while scope != null #label outer_loop {
-                    match &scope.impls {
-                        Some($impls) -> {
+                if symbol == .None {
+                    symbol = dot.scope.get_impl_symbol(typ, dot.name.name)
+                }
 
-                            for(by_ref=false) imp in impls {
-                                wait_until(imp.target_expr.typ != null, {
-                                    workspace.error_handler.report_error_at(dot.location, "Should this error happen?")
-                                })
-
-                                g_logger.log("[compile_dot] checking {} matches impl type {}", [typ, imp.target_expr.value.as_type()])
-                                if !typ.matches_pattern(imp.target_expr.value.as_type()) then continue
-
-                                // find function
-                                for(by_ref=false) func in &imp.functions {
-                                    g_logger.log("[compile_dot] checking function {}", [func.name])
-                                    if dot.name.name == func.name {
-                                        // found matching function
-                                        g_logger.log("[compile_dot] {} matches", [func.name])
-                                        impl_func = func
-                                        break outer_loop
-                                    }
-                                }
-                            }
-
-                        }
-
-                        None -> {
-
-                        }
+                match &symbol {
+                    Some($symbol) -> {
+                        dot.original_symbol = Some(*symbol)
+                        dot.typ, dot.value = get_type_and_value_of_symbol(symbol)
                     }
 
-                    scope = scope.parent
+                    None -> {}
                 }
 
-                g_logger.log("[compile_dot] checking if function was found")
-                if impl_func == null {
-                    workspace.error_handler.report_error_at(dot.location, "No function '{}' implemented for type {}", [dot.name.name, typ])
-                    poison(dot)
-                    return dot
-                }
+                // impl_func : ^AstFunction = null
+                // scope := dot.scope
+                // while scope != null #label outer_loop {
+                //     match &scope.impls {
+                //         Some($impls) -> {
+                //             for(by_ref=false) imp in impls {
+                //                 wait_until(imp.target_expr.typ != null, {
+                //                     workspace.error_handler.report_error_at(dot.location, "Should this error happen?")
+                //                 })
 
-                g_logger.log("[compile_dot] waiting until function is done")
-                wait_until(impl_func.typ != null, {
-                    workspace.error_handler.report_error_at(dot.location, "Type of function could not be calculated")
-                    poison(dot)
-                    return dot
-                })
+                //                 if !typ.matches_pattern(imp.target_expr.value.as_type()) then continue
 
-                g_logger.log("[compile_dot] function is done {}", [impl_func.typ])
-                dot.typ = impl_func.typ
-                dot.value = .Function(impl_func)
+                //                 match imp.sub_scope.get_symbol_local(dot.name.name) {
+                //                     Some($symbol) -> {
+                //                         dot.original_symbol = Some(*symbol)
+                //                         dot.typ, dot.value = get_type_and_value_of_symbol(symbol)
+                //                         break outer_loop
+                //                     }
 
-                // match &dot.scope.type_impl_map {
-                //     Some($map) -> {
-                //         // impls are cached
-                //         g_logger.log("[compile_dot] searching for function in scope.type_impl_map")
-                //     }
-
-                //     None -> {
-                //         // impls are not cached yet
-                //         g_logger.log("[compile_dot] computing impls for types in scope")
-                        
-                //         scope := dot.scope.parent
-                //         while scope != null {
-                //             // check if impls are already cached
-                //             match &scope.type_impl_map {
-                //                 Some($map) -> {
-
-                //                 }
-
-                //                 None -> {
-
+                //                     None -> {}
                 //                 }
                 //             }
                 //         }
+
+                //         None -> {}
+                //     }
+
+                //     if scope == scope_of_type_definition {
+                //         break
+                //     }
+
+                //     scope = scope.parent
+
+                //     if scope == null and scope_of_type_definition != null {
+                //         scope = scope_of_type_definition
                 //     }
                 // }
 
-                return dot
+                if dot.typ == null {
+                    workspace.error_handler.report_error_at(dot.location, "Unknown symbol '{}' in type {}", [dot.name.name, typ])
+                    poison(dot)
+                    return dot
+                }
+
             }
 
             TypeInfoModule(_) -> {
@@ -729,6 +680,8 @@ impl CompileNode {
                 compile_node(dot.name, ctx)
                 dot.typ = dot.name.typ
                 dot.value = dot.name.value
+                dot.symbol = dot.name.symbol
+                dot.original_symbol = dot.name.original_symbol
             }
 
             _ -> {
@@ -1286,6 +1239,27 @@ impl CompileNode {
         return iff
     }
 
+    split_const_decl :: (&Self, decl: &AstConstDecl, context: $T, on_decl: fn(&Self, &AstConstDecl, T), on_error: fn(&Self, &AstConstDecl, T)) {
+        match decl.pattern {
+            AstIdentifier($id) -> {
+                decl.name = id.name
+                on_decl(self, decl, context)
+            }
+
+            AstTuple($tuple) -> {
+                @assert(false, "TODO: not implemented")
+                // for(by_ref=false) value in tuple.values {
+                //     sub_access := workspace.get_compiler().new_ast(AstDeclRef(decl = .ConstDecl(decl)))
+
+                // }
+            }
+
+            _ -> {
+                on_error(self, decl, context)
+            }
+        }
+    }
+
     compile_impl :: (&Self, node: &AstImpl, ctx: CNContext) -> &AstNode {
         node.target_expr.scope = node.scope
         compile_node(node.target_expr, ctx.with_expected(@type_info(type)))
@@ -1308,10 +1282,8 @@ impl CompileNode {
             handle_poison(node, node.trait_expr)
         }
 
-
         // register this impl in the current scope
         if node.trait_expr == null {
-            g_logger.log("[compile_impl] adding to scope")
             node.scope.add_impl_for_type(^*node)
         }
 
@@ -1321,39 +1293,27 @@ impl CompileNode {
 
         for(by_ref=false) child in &node.children {
             child.scope = node.sub_scope
-            child.set_flags(.AllowPubModifier)
+            AstNode.set_flags(&*child, .AllowPubModifier)
 
             match child {
                 AstConstDecl($decl) -> {
-                    g_logger.log("[compile_impl] found const decl")
-                    name := "#anonymous"
-                    match decl.pattern {
-                        AstIdentifier($id) -> {
-                            name = id.name
-                        }
+                    split_const_decl(&*decl, (node, &jobs), on_decl = (self, decl, ctx) => {
+                        define_const_decl(decl, &*self.workspace)
 
-                        _ -> {
-                            workspace.error_handler.report_error_at(child.location, "Only identifier allowed here")
-                            poison(&*decl)
-                            continue
-                        }
-                    }
+                        match decl.value_expr {
+                            AstFunction($func) -> {
+                                ctx[0].functions.add(func)
+                            }
 
-                    match decl.value_expr {
-                        AstFunction($func) -> {
-                            g_logger.log("[compile_impl] adding function")
-                            func.name = name
-                            node.functions.add(func)
-
-                            job := workspace.create_job(CompileGlobalNodeJob.new(decl))
-                            jobs.add(job)
-                            workspace.add_job(job)
+                            _ -> {}
                         }
-
-                        _ -> {
-                            workspace.error_handler.report_error_at(child.location, "TODO: not implemented")
-                        }
-                    }
+                        job := self.workspace.create_job(CompileGlobalNodeJob.new(cast ^*decl))
+                        ctx[1].add(job)
+                        self.workspace.add_job(job)
+                    }, on_error = (self, decl, ctx) => {
+                        self.workspace.error_handler.report_error_at(decl.location, "Invalid pattern in constant declaration")
+                        poison(decl)
+                    })
                 }
 
                 _ -> {
@@ -1645,8 +1605,6 @@ impl CompileNode {
                         [mem.name])
                 })
 
-                // g_logger.log("mem: {}, {}", [mem.])
-
                 member_type_infos[it_index].offset = util.next_aligned_num(size, mem.var_type.alignment)
                 alignment = max(alignment, mem.var_type.alignment)
                 size += mem.var_type.size
@@ -1713,6 +1671,7 @@ impl CompileNode {
 
     compile_identifier :: (&Self, id: &AstIdentifier, ctx: CNContext) -> &AstNode {
         id.symbol = id.scope.get_symbol(id.name, AstNode.has_flags(id, .OnlyPubDeclarations))
+        
         match id.symbol {
             .Val($value) -> {
                 id.typ = value.typ
@@ -1725,6 +1684,7 @@ impl CompileNode {
                 })
                 id.typ = decl.value_expr.typ // @todo: get type of type expr if available
                 id.value = decl.value_expr.value
+                id.original_symbol = decl.original_symbol
             }
 
             .Decl($decl) -> {
@@ -1879,7 +1839,10 @@ impl CompileNode {
 
                 if call.arguments.count() != func.params.length {
                     workspace.error_handler.report_error_at(call.location, "Wrong number of arguments in function call")
+                    poison(call)
+                    return call
                 } else {
+                    any_arg_failed := false
                     for arg in &call.arguments {
                         param := func.params[it_index]
 
@@ -1887,15 +1850,19 @@ impl CompileNode {
                         *arg = cast ^*compile_node(&**arg, ctx.with_expected(param.var_type))
 
                         if arg.value == .Poison {
-                            poison(call)
-                            return call
-                        }
-                        if !TypeInfo.same(arg.typ, param.var_type) {
+                            any_arg_failed = true
+                        } else if !TypeInfo.same(arg.typ, param.var_type) {
+                            any_arg_failed = true
                             workspace.error_handler.report_error_at(
                                 arg.location,
                                 "Type of argument ({}) does not match type of parameter '{}' ({}).",
                                 [arg.typ, param.name, param.var_type])
                         }
+                    }
+
+                    if any_arg_failed {
+                        poison(call)
+                        return call
                     }
                 }
 
@@ -1912,22 +1879,29 @@ impl CompileNode {
                         call.location,
                         "Wrong number of arguments ({}) in function call. Expected {}",
                         [call.arguments.count(), func_type.param_types.length])
+                    poison(call)
+                    return call
                 } else {
+                    any_arg_failed := false
                     for arg in &call.arguments {
                         param_type := *func_type.param_types[it_index]
                         arg.scope = call.scope
                         *arg = cast ^*compile_node(&**arg, ctx.with_expected(param_type))
 
                         if arg.value == .Poison {
-                            poison(call)
-                            return call
-                        }
-                        if !TypeInfo.same(arg.typ, param_type) {
+                            any_arg_failed = true
+                        } else if !TypeInfo.same(arg.typ, param_type) {
+                            any_arg_failed = true
                             workspace.error_handler.report_error_at(
                                 arg.location,
                                 "Type of argument ({}) does not match type of parameter ({}).",
                                 [arg.typ, param_type])
                         }
+                    }
+
+                    if any_arg_failed {
+                        poison(call)
+                        return call
                     }
                 }
             }
@@ -1943,21 +1917,26 @@ impl CompileNode {
                         "Wrong number of arguments ({}) in function call. Expected {}",
                         [call.arguments.count(), func_type.param_types.length])
                 } else {
+                    any_arg_failed := false
                     for arg in &call.arguments {
                         param_type := *func_type.param_types[it_index]
                         arg.scope = call.scope
                         *arg = cast ^*compile_node(&**arg, ctx.with_expected(param_type))
 
                         if arg.value == .Poison {
-                            poison(call)
-                            return call
-                        }
-                        if !TypeInfo.same(arg.typ, param_type) {
+                            any_arg_failed = true
+                        } else if !TypeInfo.same(arg.typ, param_type) {
+                            any_arg_failed = true
                             workspace.error_handler.report_error_at(
                                 arg.location,
                                 "Type of argument ({}) does not match type of parameter ({}).",
                                 [arg.typ, param_type])
                         }
+                    }
+
+                    if any_arg_failed {
+                        poison(call)
+                        return call
                     }
                 }
             }
@@ -2185,6 +2164,7 @@ impl CompileNode {
 
         // check if var_type is valid
         if !validate_variable_type(decl.var_type, decl.pattern.location) {
+            poison(decl)
             return decl
         }
 
@@ -2204,7 +2184,6 @@ impl CompileNode {
     }
 
     compile_const_decl :: (&Self, decl: &AstConstDecl, ctx: CNContext) -> &AstNode {
-        debug_log("compile_const_decl")
         decl.typ = @type_info(void)
 
         if !AstNode.has_flags(decl, .IsDefinedInScope) {
@@ -2218,25 +2197,10 @@ impl CompileNode {
                 }
             }
 
-            // set name of value expr if its a function or struct/trait/enum
-            match decl.value_expr {
-                AstFunction($func) -> {
-                    func.name = name
-                }
-                AstStruct($str) -> {
-                    str.name = name
-                }
-                AstEnum($en) -> {
-                    en.name = name
-                }
-                AstTrait($tr) -> {
-                    tr.name = name
-                }
-                AstPoly($poly) -> {
-                    poly.name = name
-                }
-            }
+            decl.name = name
 
+            // set name of value expr if its a function or struct/trait/enum
+            AstNode.set_name(decl.value_expr, name)
 
             // define symbol but only if not _
             if name != "_" {
@@ -2265,10 +2229,7 @@ impl CompileNode {
             }
         }
 
-        debug_log("compile_const_decl 1")
-
         decl.value_expr <- evaluate_node(decl.value_expr, ctx.with_expected(decl.var_type))
-        debug_log("compile_const_decl 2")
         decl.value = decl.value_expr.value
 
         if decl.value == .Poison {
@@ -2276,7 +2237,7 @@ impl CompileNode {
             return decl
         }
 
-        debug_log("compile_const_decl 3")
+        decl.original_symbol = AstNode.get_original_symbol(decl.value_expr)
 
         if decl.value_expr.typ != @type_info(void) and decl.value == .None {
             workspace.error_handler.report_error_at(decl.value_expr.location, "Value is not constant")
@@ -2296,6 +2257,52 @@ impl CompileNode {
 
 
 #file_scope
+
+define_decl :: (decl: &AstDecl, workspace: &Workspace) {
+    decl.name = match &*decl.pattern {
+        AstIdentifier($id) -> id.name
+        _ -> {
+            workspace.error_handler.report_error_at(decl.location, "Non-identifier patterns not implemented yet")
+            return
+        }
+    }
+
+    // define symbol but only if not _
+    if decl.name != "_" {
+        match decl.scope.define_decl(decl.name, decl) {
+            Err() -> {
+                workspace.error_handler.report_error_at(decl.pattern.location, "A symbol with this name already exists in this scope")
+            }
+        }
+    }
+    AstNode.set_flags(decl, .IsDefinedInScope)
+}
+
+define_const_decl :: (decl: &AstConstDecl, workspace: &Workspace) {
+    decl.value_expr.scope = decl.scope
+    
+    name := match decl.pattern {
+        AstIdentifier($id) -> id.name
+        _ -> {
+            workspace.error_handler.report_error_at(decl.location, "Non-identifier patterns not implemented yet")
+            return
+        }
+    }
+
+    // set name of value expr if its a function or struct/trait/enum
+    AstNode.set_name(decl.value_expr, name)
+
+    // define symbol but only if not _
+    if name != "_" {
+        match decl.scope.define_const_decl(name, decl) {
+            Err() -> {
+                workspace.error_handler.report_error_at(decl.pattern.location, "A symbol with this name already exists in this scope")
+            }
+        }
+    }
+
+    AstNode.set_flags(decl, .IsDefinedInScope)
+}
 
 handle_poison :: (node: &AstNode, possible_poison: Code) #macro {
     if @insert(possible_poison).value == .Poison {
