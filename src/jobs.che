@@ -1630,7 +1630,12 @@ impl CompileNode {
 
     compile_number :: (&Self, num: &AstNumberLiteral, ctx: CNContext) -> &AstNode {
         num.typ = match num.value {
-            .Int(_) -> @type_info(int)
+            .Int(_) -> if ctx.expected != null then match ctx.expected {
+                TypeInfoInt($ti) -> ctx.expected
+                _ -> @type_info(int)
+            } else {
+                @type_info(int)
+            }
             .Float(_) -> @type_info(f64)
             _ -> @assert(false)
         }

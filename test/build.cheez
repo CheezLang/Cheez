@@ -4,20 +4,38 @@ io :: std.IO
 _ :: Main()
 Main :: () {
     f := Foo(
-        b = true
-        a = 123
+        b = Foo.get_i16(13)
+        a = Foo.get_i16(9)
+        // e = "lol"
+        c = Foo.get_int(123)
     )
-
+    io.print_int(int(f.a))
+    io.print_int(int(f.b))
+    io.print_int(f.c)
+    // io.print_string(f.e)
 }
 
 Foo :: struct {
-    a : int
-    b : bool
+    a : i16
+    b : i16
+    c : int
+    // e : string
 }
 
 impl Foo {
     foo :: () {
         io.print_string("Foo.foo()")
+    }
+
+    get_i16 :: (val: i16) -> i16 {
+        _print("get_i16: ")
+        io.print_int(int(val))
+        return val
+    }
+    get_int :: (val: int) -> int {
+        _print("get_int: ")
+        io.print_int(val)
+        return val
     }
 }
 

@@ -99,7 +99,7 @@ impl CodeGenerator for ByteCodeGenerator {
         cbc_func := self.allocate_function("$expr", file_path)
         builder.begin_function(cbc_func)
         generate_expression(node)
-        builder.build_store_stack(0, slots_for_size(node.typ.size))
+        builder.build_store_stack(0, node.typ.size)
         builder.build_halt()
         builder.end_function()
         return cbc_func
@@ -175,7 +175,7 @@ impl CodeGenerator for ByteCodeGenerator {
                     // @todo: figure out if this is a local variable or a global
                     generate_expression(ass.value_expr)
                     builder.set_location(ass.location)
-                    builder.build_store_local(*self.variables[decl.id], slots_for_size(ass.value_expr.typ.size))
+                    builder.build_store_local(*self.variables[decl.id], ass.value_expr.typ.size)
                 }
                 
                 _ -> {
@@ -207,7 +207,7 @@ impl CodeGenerator for ByteCodeGenerator {
                             generate_expression(ass.value_expr)
 
                             // =
-                            builder.build_store(slots_for_size(ti.target.size))
+                            builder.build_store(ti.target.size)
                         }
 
                         _ -> {
@@ -240,7 +240,7 @@ impl CodeGenerator for ByteCodeGenerator {
                 generate_expression(ass.value_expr)
 
                 // =
-                builder.build_store(slots_for_size(dot.typ.size))
+                builder.build_store(dot.typ.size)
             }
 
             AstUnary($un) if un.operator == .Deref -> {
@@ -251,7 +251,7 @@ impl CodeGenerator for ByteCodeGenerator {
                 generate_expression(ass.value_expr)
 
                 // =
-                builder.build_store(slots_for_size(un.typ.size))
+                builder.build_store(un.typ.size)
             }
 
             _ -> {
@@ -270,7 +270,7 @@ impl CodeGenerator for ByteCodeGenerator {
         for val in &arr.values {
             builder.build_dup(1)
             generate_expression(&**val)
-            builder.build_store(slots_for_size(val.typ.size))
+            builder.build_store(val.typ.size)
 
             // increment pointer
             builder.build_const_int(slots_for_size(val.typ.size) * @sizeof(u64))
@@ -289,7 +289,7 @@ impl CodeGenerator for ByteCodeGenerator {
 
         if decl.value_expr != null {
             generate_expression(&*decl.value_expr)
-            builder.build_store_local(index, slots_for_size(decl.var_type.size))
+            builder.build_store_local(index, decl.var_type.size)
         }
     }
 
@@ -321,7 +321,7 @@ impl CodeGenerator for ByteCodeGenerator {
 
             .Deref -> {
                 generate_expression(un.sub)
-                builder.build_load(slots_for_size(un.typ.size))
+                builder.build_load(un.typ.size)
             }
 
             _ -> error_handler.report_error_at(un.location, "Code gen for unary not implemented")
@@ -414,7 +414,7 @@ impl CodeGenerator for ByteCodeGenerator {
                     builder.build_const_int(ti.target.size)
                     builder.build_mul(.I64)
                     builder.build_add(.I64)
-                    builder.build_load(slots_for_size(ti.target.size))
+                    builder.build_load(ti.target.size)
                 }
 
                 _ -> {
@@ -494,7 +494,7 @@ impl CodeGenerator for ByteCodeGenerator {
                 builder.build_add(.I64)
 
                 if deref {
-                    builder.build_load(slots_for_size(dot.typ.size))
+                    builder.build_load(dot.typ.size)
                 } else {
                     // pointer is already on top of stack
                 }
@@ -651,6 +651,39 @@ impl CodeGenerator for ByteCodeGenerator {
                 builder.build_native_call2(func.wrapper, func.func, NativeFunctionWrapper.slots_for_type(cast call.function.typ))
             }
 
+            .Type($typ) -> match typ {
+                TypeInfoStruct($str) -> { // struct literal
+                    builder.build_push(slots_for_size(str.size))
+                    builder.build_load_address()
+
+                    // top of stack is address of temporary
+
+                    for arg in &call.arguments {
+                        @assert(arg.param == .StructMember)
+                        field := arg.param.StructMember
+
+                        builder.build_dup(slots_for_size(@sizeof(^void)))
+                        builder.build_const_int(field.offset)
+                        builder.build_add(.U64)
+
+                        // top of stack is address of current struct field
+
+                        generate_expression(arg.value_expr)
+                        builder.build_store(field.typ.size)
+                    }
+
+                    // top of stack is address of temporary
+
+                    builder.build_pop(slots_for_size(@sizeof(^void)))
+
+                    // top of stack is temporary
+                }
+
+                _ -> {
+                    error_handler.report_error_at(call.function.location, "generate_call for type {} not implemented (cast)", [typ])
+                }
+            }
+
             _ -> {
                 error_handler.report_error_at(call.function.location, "generate_call: Can't call {}", [call.function.value])
             }
@@ -704,7 +737,7 @@ impl CodeGenerator for ByteCodeGenerator {
             .Decl($decl) -> match self.variables.get(decl.id) {
                 Some($index) -> {
                     if deref {
-                        builder.build_load_local(*index, slots_for_size(decl.var_type.size))
+                        builder.build_load_local(*index, decl.var_type.size)
                     } else {
                         builder.build_address_of(*index)
                     }
@@ -871,37 +904,37 @@ impl InstructionBuilder {
         function.instructions.add(*cast(^u64)^index)
     }
 
-    build_load :: (&Self, slots: int) {
+    build_load :: (&Self, bytes: int) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.Load)
-        function.instructions.add(cast slots)
+        function.instructions.add(cast bytes)
     }
 
-    build_store :: (&Self, slots: int) {
+    build_store :: (&Self, bytes: int) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.Store)
-        function.instructions.add(cast slots)
+        function.instructions.add(cast bytes)
     }
 
-    build_load_local :: (&Self, index: int, slots: int) {
+    build_load_local :: (&Self, index: int, bytes: int) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.LoadLocal)
         function.instructions.add(*cast(^u64)^index)
-        function.instructions.add(cast slots)
+        function.instructions.add(cast bytes)
     }
 
-    build_store_local :: (&Self, index: int, slots: int) {
+    build_store_local :: (&Self, index: int, bytes: int) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.StoreLocal)
         function.instructions.add(*cast(^u64)^index)
-        function.instructions.add(cast slots)
+        function.instructions.add(cast bytes)
     }
 
-    build_store_stack :: (&Self, index: int, slots: int) {
+    build_store_stack :: (&Self, index: int, bytes: int) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.StoreStack)
         function.instructions.add(cast index)
-        function.instructions.add(cast slots)
+        function.instructions.add(cast bytes)
     }
 
     build_cast_float_to_double :: (&Self) {

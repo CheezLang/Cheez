@@ -162,7 +162,7 @@ AstArgument :: struct AstNode {
     name        : ^AstIdentifier
     value_expr  : &AstNode
 
-    param       : enum {
+    param       : enum #copy {
         None
         Parameter       : &AstDecl
         StructMember    : &TypeInfoStructMember

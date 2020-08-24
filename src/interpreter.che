@@ -23,6 +23,7 @@ use import value
 
 #export_scope
 
+CLEAR_STACK_SLOTS_BEFORE_USE :: true
 
 CodeRunner :: trait {
     run :: (&Self, interp: &Interpreter) -> InterpStepResult;
@@ -264,7 +265,7 @@ impl Interpreter {
 
         return_value_slots := 0
         if func.ast_function != null {
-            return_value_slots = (func.ast_function.return_type.size + 7) / 8
+            return_value_slots = slots_for_size(func.ast_function.return_type.size)
         }
 
         *frames[fp] = StackFrame(
@@ -444,6 +445,7 @@ impl Interpreter {
             }
             .Dup -> {
                 slots := arg(int)
+                if const CLEAR_STACK_SLOTS_BEFORE_USE then C.memset(^*frame.stack[frame.sp], 0, cast slots * @sizeof(u64))
                 C.memcpy(^*frame.stack[frame.sp], ^*frame.stack[frame.sp - slots], cast slots * @sizeof(u64))
                 frame.sp += slots
             }
@@ -468,34 +470,43 @@ impl Interpreter {
                 push(address)
             }
             .Load -> {
-                slots  := arg(int)
+                bytes := arg(int)
+                slots := slots_for_size(bytes)
                 address := pop(^int)
-                C.memcpy(^*frame.stack[frame.sp], address, cast slots * @sizeof(u64))
+                if const CLEAR_STACK_SLOTS_BEFORE_USE then C.memset(^*frame.stack[frame.sp], 0, cast slots * @sizeof(u64))
+                C.memcpy(^*frame.stack[frame.sp], address, cast bytes)
                 frame.sp += slots
-            }
-            .Store -> {
-                slots := arg(int)
-                frame.sp -= slots
-                address := pop(^void)
-
-                C.memcpy(address, ^*frame.stack[frame.sp + 1], cast slots * @sizeof(u64))
             }
             .LoadLocal -> {
                 index := arg(int)
-                slots  := arg(int)
-                C.memmove(^*frame.stack[frame.sp], ^*frame.stack[frame.bp + index], cast slots * @sizeof(u64))
+                bytes := arg(int)
+                slots := slots_for_size(bytes)
+                if const CLEAR_STACK_SLOTS_BEFORE_USE then C.memset(^*frame.stack[frame.sp], 0, cast slots * @sizeof(u64))
+                C.memmove(^*frame.stack[frame.sp], ^*frame.stack[frame.bp + index], cast bytes)
                 frame.sp += slots
+            }
+            .Store -> {
+                bytes := arg(int)
+                slots := slots_for_size(bytes)
+                frame.sp -= slots
+                address := pop(^void)
+                C.memcpy(address, ^*frame.stack[frame.sp + 1], cast bytes)
             }
             .StoreLocal -> {
                 index := arg(int)
-                slots  := arg(int)
-                C.memmove(^*frame.stack[frame.bp + index], ^*frame.stack[frame.sp - slots], cast slots * @sizeof(u64))
+                bytes := arg(int)
+                slots := slots_for_size(bytes)
+                if const CLEAR_STACK_SLOTS_BEFORE_USE then C.memset(^*frame.stack[frame.bp + index], 0, cast slots * @sizeof(u64))
+                C.memmove(^*frame.stack[frame.bp + index], ^*frame.stack[frame.sp - slots], cast bytes)
                 frame.sp -= slots
             }
             .StoreStack -> {
                 index := arg(int)
-                slots  := arg(int)
-                C.memmove(^*frame.stack[index], ^*frame.stack[frame.sp - slots], cast slots * @sizeof(u64))
+                bytes := arg(int)
+                slots := slots_for_size(bytes)
+
+                if const CLEAR_STACK_SLOTS_BEFORE_USE then C.memset(^*frame.stack[index], 0, cast slots * @sizeof(u64))
+                C.memmove(^*frame.stack[index], ^*frame.stack[frame.sp - slots], cast bytes)
                 frame.sp -= slots
             }
 
@@ -879,20 +890,32 @@ impl Interpreter {
 
             .Return -> {
                 @assert(frame.sp > 0)
+                if const CLEAR_STACK_SLOTS_BEFORE_USE then C.memset(^*frame.stack[0], 0, cast frame.return_value_slots * @sizeof(u64))
                 C.memmove(^*frame.stack[0], ^*frame.stack[frame.sp - frame.return_value_slots], cast frame.return_value_slots * @sizeof(u64))
                 pop_frame()
                 if fp >= 0 {
-                    // increment sp by one for return value
-                    // @todo: needs to work with return values bigger than 8 bytes (1 stack slot)
-                    // @fixme frames[fp].sp += 1 // fails to compile
                     frames[fp].sp += frame.return_value_slots
                 } else {
                     return .Done
                 }
             }
             .ReturnVoid -> {
+                top := self.top_frame()
+                if top.func != null and top.func.ast_function != null and top.func.ast_function.return_type != @type_info(void) {
+                    C.memset(^*frame.stack[0], 0, cast frame.return_value_slots * @sizeof(u64))
+                    error_handler.report_error("Trying to return without value in non-void function: {}{}{}{}{}{}{}{}{}{}{}{}", [
+                        fmt.align(60), frame.func.debug_info.get_location_for_ip(frame.ip_prev).line
+                        fmt.align(65), fp
+                        fmt.align(70), frame.sp
+                        fmt.align(76), frame.ip_prev
+                        fmt.align(84), Instruction.pretty_print(frame.code[frame.ip_prev..])
+                        fmt.align(104), frame.dump_stack()
+                    ])
+                }
                 pop_frame()
-                if fp < 0 {
+                if fp >= 0 {
+                    frames[fp].sp += frame.return_value_slots
+                } else {
                     return .Done
                 }
             }
@@ -1073,4 +1096,10 @@ impl Instruction {
             _               -> fmt.format("Unknown {}", [code[0]])
         }
     }
+}
+
+#file_scope
+
+slots_for_size :: (size_in_bytes: int) -> int {
+    return (size_in_bytes + 7) / 8
 }
