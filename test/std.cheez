@@ -1,7 +1,7 @@
 pub IO :: struct {}
 
 impl IO {
-    pub NEW_LINE :: "`n"
+    pub NEW_LINE :: '`n'
 
     pub print_string :: (str: string) {
         _println(str)
@@ -9,6 +9,10 @@ impl IO {
 
     pub print_bool :: (b: bool) {
         _println(if b then "true" else "false")
+    }
+
+    pub print_char :: (c: char) {
+        _print_char(c)
     }
 
     pub print_int :: (mut b: int) {

@@ -333,6 +333,18 @@ command_build :: (options: ^CommandBuild) {
     ))
 
     compiler.get().user_defined_builtins.add((
+        "_print_char",
+        Symbol.NativeFunc(NativeFunctionWrapper.new(
+            cast(NativeFunction) (interp) => {
+                frame := interp.top_frame()
+                io.set_console_foreground_color(.Green)
+                io.format("{}", [frame.get_arg(0, char)])
+                io.set_console_foreground_color(.White)
+            },
+            fn(char)
+        ))
+    ))
+    compiler.get().user_defined_builtins.add((
         "_println",
         Symbol.NativeFunc(NativeFunctionWrapper.new(
             cast(NativeFunction) (interp) => {

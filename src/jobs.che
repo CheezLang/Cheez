@@ -421,6 +421,7 @@ impl CompileNode {
             AstBreak($brake)        -> compile_break(brake, ctx)
             AstCall($call)          -> compile_call(call, ctx)
             AstCast($cst)           -> compile_cast(cst, ctx)
+            AstChar($cha)           -> compile_char(cha, ctx)
             AstConstDecl($decl)     -> compile_const_decl(decl, ctx)
             AstContinue($cont)      -> compile_continue(cont, ctx)
             AstDecl($decl)          -> compile_decl(decl, ctx)
@@ -1780,6 +1781,12 @@ impl CompileNode {
         return cst
     }
 
+    compile_char :: (&Self, node: &AstChar, ctx: CNContext) -> &AstNode {
+        node.typ = @type_info(char)
+        node.value = .Char(node.char_value)
+        return node
+    }
+
     compile_call :: (&Self, call: &AstCall, ctx: CNContext) -> &AstNode {
         call.function.scope = call.scope
         call.function <- compile_node(call.function, ctx.with_expected(null))
@@ -1797,6 +1804,7 @@ impl CompileNode {
                     scope       = ufc.scope
                     name        = null
                     value_expr  = ufc.value_expr
+                    param       = .None
                 )))
                 for arg in &call.arguments {
                     new_args.add(*arg)
@@ -1814,22 +1822,138 @@ impl CompileNode {
 
         match call.function.value {
             .Type($typ) -> {
-                if call.arguments.count() != 1 {
-                    workspace.error_handler.report_error_at(call.location, "Cast requires exactly one argument");
-                    poison(call)
-                    return call
+                match typ {
+                    TypeInfoStruct($str) -> {
+                        // wait_until(str.members_done, {
+                        //     // nothing to see here
+                        // })
+
+                        // get struct definition ast if available
+                        struct_decl : Option[&AstStruct] = match AstNode.get_original_symbol(call.function) {
+                            Some($original) -> match original {
+                                .OriginalNode($node) -> match node {
+                                    AstStruct($decl) -> Some(decl)
+                                    _ -> None
+                                }
+                                _ -> None
+                            }
+                            _ -> None
+                        }
+
+                        // check for too many arguments
+                        if call.arguments.count() > str.members.length {
+                            workspace.error_handler.report_error_at(call.location, "Too many arguments. Expected {}, got {}", [str.members.length, call.arguments.count()])
+                            poison(call)
+                            return call
+                        }
+
+                        // stores which fields have a corresponding argument
+                        // @todo: is @alloca possible here?
+                        provided_fields := @alloca(bool, str.members.length)
+                        C.memset(provided_fields.data, 0, cast provided_fields.length * @sizeof(bool))
+
+                        allow_unnamed := true
+                        for(by_ref=false) arg, i in &call.arguments {
+                            field := if arg.name == null {
+                                if !allow_unnamed {
+                                    workspace.error_handler.report_error_at(arg.location, "Unnamed argument not allowed here")
+                                    poison(call)
+                                    return call
+                                }
+
+                                // g_logger.log("[compile_struct_init] unnamed arg {} ({}) -> field {}", [i, arg.location, arg.param])
+                                str.members[i]
+                            } else {
+                                name := arg.name.name
+                                allow_unnamed = false
+                                field := str.get_member(name)
+                                if field == null {
+                                    workspace.error_handler.report_error_at(arg.name.location, "Struct '{}' has no field called '{}'",
+                                        [str.name, name])
+                                    poison(call)
+                                    return call
+                                }
+
+                                // g_logger.log("[compile_struct_init] named arg '{}' {} ({}) -> field {}", [name, i, arg.location, arg.param])
+                                &*field
+                            }
+
+                            arg.param = .StructMember(field)
+                            *provided_fields[field.index] = true
+
+                            // compile value
+                            arg.value_expr.scope = call.scope
+                            arg.value_expr = compile_node(arg.value_expr, ctx.with_expected(field.typ))
+                            handle_poison(&*arg, arg.value_expr)
+
+                            // check type of argument
+                            if !TypeInfo.same(arg.value_expr.typ, field.typ) {
+                                match struct_decl {
+                                    Some($decl) -> workspace.error_handler.report_error_at(
+                                        arg.value_expr.location,
+                                        "Type of argument ({}) does not match type of struct field ({})",
+                                        [arg.value_expr.typ, field.typ],
+                                        details = [("Struct field '{}.{}' defined here: {}", [str.name, field.name, decl.members[field.index].location])])
+                                    None -> workspace.error_handler.report_error_at(
+                                        arg.value_expr.location,
+                                        "Type of argument ({}) does not match type of struct field ({})",
+                                        [arg.value_expr.typ, field.typ])
+                                }
+                                poison(call)
+                                return call
+                            }
+
+                            arg.typ = arg.value_expr.typ
+                            arg.value = arg.value_expr.value
+                        }
+
+                        // check if there are struct fields which have no corresponding argument
+                        any_fields_missing := false
+                        for field_set in provided_fields {
+                            if !field_set {
+                                any_fields_missing = true
+                                field := str.members[it_index]
+                                match struct_decl {
+                                    Some($decl) -> workspace.error_handler.report_error_at(
+                                        call.location,
+                                        "Missing argument for struct field '{} : {}'",
+                                        [field.name, field.typ],
+                                        details = [("Struct field '{}.{}' defined here: {}", [str.name, field.name, decl.members[field.index].location])])
+                                    None -> workspace.error_handler.report_error_at(
+                                        call.location,
+                                        "Missing argument for struct field '{} : {}'",
+                                        [field.name, field.typ])
+                                }
+                            }
+                        }
+                        if any_fields_missing {
+                            poison(call)
+                            return call
+                        }
+
+                        call.typ = str
+                        return call
+                    }
+
+                    _ -> {
+                        if call.arguments.count() != 1 {
+                            workspace.error_handler.report_error_at(call.location, "Cast requires exactly one argument");
+                            poison(call)
+                            return call
+                        }
+
+                        // create cast
+                        cast_ast := workspace.new_ast(AstCast(
+                            id          = -1
+                            location    = call.location
+                            scope       = call.scope
+                            type_expr   = ^*call.function
+                            value_expr  = &**call.arguments[0]
+                        ))
+
+                        return compile_node(&*cast_ast, ctx)
+                    }
                 }
-
-                // create cast
-                cast_ast := workspace.new_ast(AstCast(
-                    id          = -1
-                    location    = call.location
-                    scope       = call.scope
-                    type_expr   = ^*call.function
-                    value_expr  = &**call.arguments[0]
-                ))
-
-                return compile_node(&*cast_ast, ctx)
             }
 
             .Function($func) -> {

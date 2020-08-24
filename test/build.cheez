@@ -1,32 +1,24 @@
 std :: import "std.cheez"
+io :: std.IO
 
 _ :: Main()
 Main :: () {
-    x := Foo.foo("lol")
-    io :: std.IO
-    io.print_string(x)
-    io.print_string(Foo.NAME)
+    f := Foo(
+        b = true
+        a = 123
+    )
+
 }
 
 Foo :: struct {
     a : int
+    b : bool
 }
 
 impl Foo {
-    NAME :: "Foo"
-    ArgType :: string
-    ReturnType :: string
-
-    foo :: (str: ArgType) -> ReturnType {
-        std.IO.print_string("Foo.foo()")
-        std.IO.print_string(str)
-        std.IO.print_bool(Foo.Test)
-        return "aaa"
+    foo :: () {
+        io.print_string("Foo.foo()")
     }
-}
-
-impl Foo {
-    Test :: false
 }
 
 // _ :: build()

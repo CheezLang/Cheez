@@ -161,6 +161,12 @@ impl AstNode for AstPoly {}
 AstArgument :: struct AstNode {
     name        : ^AstIdentifier
     value_expr  : &AstNode
+
+    param       : enum {
+        None
+        Parameter       : &AstDecl
+        StructMember    : &TypeInfoStructMember
+    }
 }
 impl AstNode for AstArgument {}
 
@@ -198,6 +204,11 @@ AstString :: struct AstNode {
     string_value : string
 }
 impl AstNode for AstString {}
+
+AstChar :: struct AstNode {
+    char_value : char
+}
+impl AstNode for AstChar {}
 
 AstBool :: struct AstNode {
     bool_value : bool

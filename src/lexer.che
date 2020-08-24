@@ -547,7 +547,7 @@ impl Lexer {
             d := C.strtod(cast str.get_raw(), null)
             token.data = TokenData.Double(d)
         } else {
-            i := C.strtol(cast str.get_raw(), null, cast base)
+            i := C.strtoll(cast str.get_raw(), null, cast base)
             token.data = TokenData.Integer(i)
         }
     }

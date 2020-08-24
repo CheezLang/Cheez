@@ -1,9 +1,11 @@
 use import std.array
 use import std.fiber
+use import std.unicode
 
 mem :: import std.mem.allocator
 io  :: import std.io
 fmt :: import std.fmt
+C   :: import std.c
 
 use import logging.logger
 
@@ -1006,6 +1008,7 @@ impl Parser {
             .OpenParen      -> parse_parenthesized(allow_comma, allow_function)
             .Period         -> parse_anonymous_dot()
             .StringLiteral  -> cast(^AstNode) parse_string()
+            .CharLiteral    -> cast(^AstNode) parse_char_literal()
 
             _ -> {
                 error_handler.report_error_at(token.location, "Unexpected token {} in expression", [token.typ])
@@ -1029,6 +1032,7 @@ impl Parser {
         id := next_id()
         tok := lexer.next_token()
         value := if tok.typ == .StringLiteral {
+            @assert(tok.data == TokenData.String)
             tok.data.String
         } else {
             @assert(false)
@@ -1038,6 +1042,64 @@ impl Parser {
             id              = id
             location        = tok.location
             string_value    = value
+        ))
+    }
+
+    parse_char_literal :: (&Self) -> ^AstChar {
+        id := next_id()
+        tok := lexer.next_token()
+        value := if tok.typ == .CharLiteral {
+            @assert(tok.data == TokenData.String)
+            raw := tok.data.String
+            if raw.bytes.length == 0 {
+                error_handler.report_error_at(tok.location, "Invalid empty char literal")
+                '`0'
+            } else {
+                c, size := Utf8.decode(raw.bytes)
+
+                if i64(size) == raw.bytes.length {
+                    c
+                } else {
+                    @assert(i64(size) < raw.bytes.length)
+                    if c == '``' and raw.bytes.length == 2 {
+                        match char(*raw[1]) {
+                            '0' -> '`0'
+                            'n' -> '`n'
+                            'r' -> '`r'
+                            't' -> '`t'
+                            '``' -> '``'
+                            _ -> {
+                                error_handler.report_error_at(tok.location, "Invalid escaped char literal")
+                                '`0'
+                            }
+                        }
+                    } else if raw.starts_with("U+") {
+                        if raw.bytes.length < 3 or raw.bytes.length > 8+2 {
+                            error_handler.report_error_at(tok.location, "Invalid unicode char literal")
+                            '`0'
+                        } else {
+                            code_point_str := raw[2..]
+                            end : ^u8 = null
+                            code_point := C.strtoll(cast code_point_str.bytes.data, cast ^end, 16)
+                            if pointer_add_sized(code_point_str.bytes.data, code_point_str.bytes.length) != end {
+                                error_handler.report_error_at(tok.location, "Invalid unicode char literal")
+                            }
+                            char(code_point)
+                        }
+                    } else {
+                        error_handler.report_error_at(tok.location, "Invalid char literal")
+                        '`0'
+                    }
+                }
+            }
+        } else {
+            @assert(false)
+            return null
+        }
+        return allocate(AstChar(
+            id              = id
+            location        = tok.location
+            char_value      = value
         ))
     }
 
@@ -1095,7 +1157,12 @@ impl Parser {
         id := next_id()
 
         name : ^AstIdentifier = null
-        expr := try(parse_expression(false, true))
+        // parse_binary because parse_expression would allow a bunch of things like assignment which we don't allow here
+        // and parse_comma_expression would allow tuples but they aren't allowed here anyways
+        // so we can just skip those two and go directly to parse_binary
+        expr := try(parse_binary(false, true))
+
+        location := expr.location
 
         if check_token(.Equal) {
             match &*expr {
@@ -1111,13 +1178,15 @@ impl Parser {
             lexer.next_token()
             lexer.skip_whitespace()
             expr = try(parse_expression(false, true))
+            location = location.to(expr.location)
         }
 
         return allocate(AstArgument(
             id              = id
-            location        = expr.location
+            location        = location
             name            = name
             value_expr      = &*expr
+            param           = .None
         ))
     }
 

@@ -13,6 +13,7 @@ Value :: enum #copy {
     Function    : ^AstFunction
     Poly        : ^AstPoly
     Bool        : bool
+    Char        : char
     Int         : int
     Float       : f64
     String      : string

@@ -117,6 +117,7 @@ impl CodeGenerator for ByteCodeGenerator {
             AstBreak($brake)        -> generate_break(brake)
             AstCall($call)          -> generate_call(call)
             AstCast($cst)           -> generate_cast(cst)
+            AstChar($cha)           -> generate_char_literal(cha)
             AstConstDecl($decl)     -> generate_const_decl(decl)
             AstContinue($cont)      -> generate_continue(cont)
             AstDecl($decl)          -> generate_decl(decl)
@@ -164,10 +165,6 @@ impl CodeGenerator for ByteCodeGenerator {
                 @assert(false, "TODO: not implemented (generate_value)")
             }
         }
-    }
-
-    generate_const_decl :: (&Self, decl: &AstConstDecl) {
-        // do nothing
     }
 
     generate_assignment :: (&Self, ass: &AstAssignment) {
@@ -683,6 +680,15 @@ impl CodeGenerator for ByteCodeGenerator {
         // }
     }
 
+    generate_char_literal :: (&Self, cha: &AstChar) {
+        builder.set_location(cha.location)
+        builder.build_const_char(cha.char_value)
+    }
+
+    generate_const_decl :: (&Self, decl: &AstConstDecl) {
+        // do nothing
+    }
+
     generate_number_literal :: (&Self, num: &AstNumberLiteral) {
         builder.set_location(num.location)
 
@@ -834,6 +840,12 @@ impl InstructionBuilder {
         add_debug_info_line()
         function.instructions.add(cast Instruction.Dup)
         function.instructions.add(cast slots)
+    }
+
+    build_const_char :: (&Self, value: char) {
+        add_debug_info_line()
+        function.instructions.add(cast Instruction.ConstInt)
+        function.instructions.add(cast value)
     }
 
     build_const_int :: (&Self, value: int) {

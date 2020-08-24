@@ -121,6 +121,11 @@ validate_node :: (node: &AstNode, error_handler: ^ErrorHandler) -> bool {
             }
         }
 
+        AstChar($node) -> {
+            assert("AstChar", node.typ == @type_info(char))
+            assert("AstChar", node.value == .Char)
+        }
+
         AstConstDecl($node) -> {
             assert("AstConstDecl", node.typ == @type_info(void))
             assert("AstConstDecl", node.var_type != null)

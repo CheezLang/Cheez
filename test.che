@@ -1,69 +1,21 @@
-use import std.array
-
-util :: import std.util
-io :: import std.io
-mem :: import std.mem.allocator
-fs :: import std.io.fs
-clap :: import clap.clap
-
-use import std.process
-
-Main :: () {
-    // arr := Array[int].create()
-    // io.formatln("{}", [arr])
-    // arr.add_slice([1, 2, 3])
-    // io.formatln("{}", [arr])
-    // arr.add_slice([4, 5, 6, 7, 8, 9])
-    // io.formatln("{}", [arr])
-
-    cmd_line_args_bin := fs.read_file_binary("/proc/self/cmdline")
-    io.formatln("args: {}", [cmd_line_args_bin.Ok])
-
-    cmd_line_args := clap.get_cmd_args()
-    io.formatln("args: '{}'", [cmd_line_args])
-
-    // path := ""
-    // full_path := try_with(fs.get_full_path(path), {return})
-    // io.formatln("wd: {}", [full_path])
-
-    // result := run_process("ls", ["-l", "-a"], full_path.slice())
-    // io.formatln("run_process -> {}", [result])
-}
-
-// use import std.fiber
-
-// util :: import std.util
-// io :: import std.io
-// mem :: import std.mem.allocator
-
-// test :: (data: ^int) {
-//     io.formatln("[test] {}", [*data])
-//     *data = 456
-
-//     for 0..10 {
-//         io.formatln("[test] {}", [it])
-//         Fiber.yield()
-//     }
-//     // switch_to_fiber(test_fiber, main_fiber)
-// }
-
-// Main :: () {
-//     io.formatln("[main] creating fiber")
-
-//     num := 123
-//     io.formatln("num: {}", [num])
-
-//     Fiber.init()
-
-//     test_fiber := Fiber.new(cast(Fn(^int)) test, ^num)
-//     // defer Fiber.free(test_fiber)
-
-//     io.formatln("[main] running...")
-//     for 0 .. 15 {
-//         io.formatln("[main] {}", [it])
-//         test_fiber.resume()
-//     }
-
-//     io.formatln("[main] done")
-//     io.formatln("num: {}", [num])
-// }
+File Name,Lines
+jobs.che,2115
+parser.che,1084
+bytecode_generator.che,972
+interpreter.che,958
+lexer.che,928
+debugger.che,869
+compiler.che,733
+ast_pretty_printer.che,651
+ast.che,374
+cli.che,338
+ast_dumper.che,319
+ast_cloner.che,283
+validator.che,255
+scope.che,225
+error_handler.che,177
+value.che,71
+string_database.che,40
+types.che,24
+config.che,10
+Total,10426
