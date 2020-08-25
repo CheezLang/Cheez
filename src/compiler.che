@@ -478,6 +478,7 @@ impl Workspace {
         size := match target {
             TypeInfoTrait(_) -> 16
             TypeInfoAny(_) -> 24
+            _ -> 8
         }
         typ := self.new_type(TypeInfoPointer(
             size        = size
@@ -496,6 +497,7 @@ impl Workspace {
         size := match target {
             TypeInfoTrait(_) -> 16
             TypeInfoAny(_) -> 24
+            _ -> 8
         }
         typ := self.new_type(TypeInfoReference(
             size        = size
