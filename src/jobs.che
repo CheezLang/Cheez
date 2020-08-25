@@ -498,22 +498,41 @@ impl CompileNode {
         dot.sub <- compile_node(&*dot.sub, ctx)
         handle_poison(dot, *dot.sub)
 
-        match dot.sub.typ {
+        dot.sub_type = match dot.sub.typ {
             TypeInfoPointer($ti) -> {
-                deref := workspace.new_ast(AstUnary(
-                    id          = -1
-                    location    = dot.sub.location
-                    scope       = dot.sub.scope
-                    sub         = &*dot.sub
-                    operator    = .Deref
-                ))
-                dot.sub <- compile_node(&*deref, ctx.with_expected(ti.target))
-                handle_poison(dot, *dot.sub)
+                // deref := workspace.new_ast(AstUnary(
+                //     id          = -1
+                //     location    = dot.sub.location
+                //     scope       = dot.sub.scope
+                //     sub         = &*dot.sub
+                //     operator    = .Deref
+                // ))
+                // dot.sub <- compile_node(&*deref, ctx.with_expected(ti.target))
+                // handle_poison(dot, *dot.sub)
+                dot.address_mode = .Address
+                ti.target
+            }
+            TypeInfoReference($ti) -> {
+                // deref := workspace.new_ast(AstUnary(
+                //     id          = -1
+                //     location    = dot.sub.location
+                //     scope       = dot.sub.scope
+                //     sub         = &*dot.sub
+                //     operator    = .Deref
+                // ))
+                // dot.sub <- compile_node(&*deref, ctx.with_expected(ti.target))
+                // handle_poison(dot, *dot.sub)
+                dot.address_mode = .Address
+                ti.target
+            }
+            $ti -> {
+                dot.address_mode = .Value
+                ti
             }
         }
 
         name := dot.name.name
-        match dot.sub.typ {
+        match dot.sub_type {
             TypeInfoArray($ti) -> {
                 if name == "length" or name == "count" { // @todo: remove length eventually
                     dot.typ = @type_info(int)

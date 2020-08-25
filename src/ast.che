@@ -18,6 +18,12 @@ AstNodeFlags :: enum #flags {
     OnlyPubDeclarations
 }
 
+AddressMode :: enum #copy {
+    NotSet
+    Address
+    Value
+}
+
 __uiaeuiaeuiae := @type_info(AstNodeFlags)
 
 AstNode :: trait {
@@ -318,6 +324,8 @@ AstDot :: struct AstNode {
 
     symbol  := Symbol.NotFound
     original_symbol := Option[Symbol].None
+    sub_type        : ^TypeInfo = null
+    address_mode    := AddressMode.NotSet
 }
 impl AstNode for AstDot {}
 
