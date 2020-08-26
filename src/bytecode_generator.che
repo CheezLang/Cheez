@@ -228,14 +228,10 @@ impl CodeGenerator for ByteCodeGenerator {
                 }
             }
 
+            // struct.x = z
             AstDot($dot) if dot.symbol == .StructMember -> {
-                member := dot.symbol.StructMember
-                
-                // struct ptr
-                generate_expression(&*dot.sub, deref = false)
-                // @todo: deal with non l-values
-                builder.build_const_int(member.offset)
-                builder.build_add(.I64)
+                // left side
+                self.generate_struct_field_access(dot, false, dot.symbol.StructMember)
 
                 // value
                 generate_expression(ass.value_expr)
@@ -244,6 +240,7 @@ impl CodeGenerator for ByteCodeGenerator {
                 builder.build_store(dot.typ.size)
             }
 
+            // *x = z
             AstUnary($un) if un.operator == .Deref -> {
                 // ptr
                 generate_expression(un.sub)
@@ -470,6 +467,62 @@ impl CodeGenerator for ByteCodeGenerator {
         }
     }
 
+    generate_struct_field_access :: (&Self, dot: &AstDot, deref: bool, member: ^TypeInfoStructMember) {
+        match dot.address_mode, AstNode.has_flags(dot, .LValue) {
+            use AddressMode
+            Address, true -> {
+                generate_expression(&*dot.sub, deref = false) // address of ref
+                builder.build_load(@sizeof(^void)) // address of value
+                builder.build_const_int(member.offset)
+                builder.build_add(.I64) // address of field
+                if deref {
+                    builder.build_load(dot.typ.size)
+                }
+            }
+            Address, false -> {
+                generate_expression(&*dot.sub, deref = false) // address of value
+                builder.build_const_int(member.offset)
+                builder.build_add(.I64) // address of field
+                if deref {
+                    builder.build_load(dot.typ.size)
+                }
+            }
+
+            Value, true -> {
+                generate_expression(&*dot.sub, deref = false) // address value
+                builder.build_const_int(member.offset)
+                builder.build_add(.I64) // address of field
+                if deref {
+                    builder.build_load(dot.typ.size)
+                }
+            }
+
+            Value, false -> {
+                // this is way too complicated
+                // maybe consider adding an instruction to extract a field of a struct which lies on the top of stack by value
+                // also this abuses push(0) to get index of the next free stack slot on top of the stack
+                // and then load_address() to convert this index to the stack pointer (sp)
+                @assert(deref)
+                generate_expression(&*dot.sub, deref = true) // value
+                builder.build_push(0) // value, index of sp
+                builder.build_const_int(-slots_for_size(dot.sub_type.size)) // value, index of sp, -struct slots
+                builder.build_add(.I64) // value, index of value
+                builder.build_load_address() // value, ^value
+                builder.build_push(0) // value, ^value, index of sp
+                builder.build_load_address() // value, ^value, sp
+                builder.build_const_int(member.offset - dot.sub_type.size - @sizeof(^void)) // value, ^value, sp, offset(sp)
+                builder.build_add(.I64) // value, ^value, ^field
+                builder.build_load(member.typ.size) // value, ^value, field
+                builder.build_store(member.typ.size) // field|value
+                builder.build_pop(slots_for_size(dot.sub_type.size) - slots_for_size(member.typ.size)) // field
+            }
+
+            $address_mode, $lvalue -> {
+                error_handler.report_error_at(dot.location, "generate_dot: not implemented: {}.{}, address_mode={}, lvalue={}", [dot.sub.typ, dot.name.name, address_mode, lvalue])
+            }
+        }
+    }
+
     generate_dot :: (&Self, dot: &AstDot, deref: bool) {
         builder.set_location(dot.location)
 
@@ -486,76 +539,7 @@ impl CodeGenerator for ByteCodeGenerator {
             }
 
             TypeInfoStruct($ti) -> {
-                member := dot.symbol.StructMember
-
-                // (var v).x: .Value, lvalue
-                // (var &v).x: .Address, lvalue
-                // ({} v).x: .Value, rvalue
-                // ({} &v).x: .Address, rvalue
-
-                match dot.address_mode, AstNode.has_flags(dot, .LValue) {
-                    use AddressMode
-                    Address, true -> {
-                        generate_expression(&*dot.sub, deref = false) // address of ref
-                        builder.build_load(@sizeof(^void)) // address of value
-                        builder.build_const_int(member.offset)
-                        builder.build_add(.I64) // address of field
-                        if deref {
-                            builder.build_load(dot.typ.size)
-                        }
-                    }
-                    Address, false -> {
-                        generate_expression(&*dot.sub, deref = false) // address of value
-                        builder.build_const_int(member.offset)
-                        builder.build_add(.I64) // address of field
-                        if deref {
-                            builder.build_load(dot.typ.size)
-                        }
-                    }
-
-                    Value, true -> {
-                        generate_expression(&*dot.sub, deref = false) // address value
-                        builder.build_const_int(member.offset)
-                        builder.build_add(.I64) // address of field
-                        if deref {
-                            builder.build_load(dot.typ.size)
-                        }
-                    }
-
-                    Value, false -> {
-                        // this is way too complicated
-                        // maybe consider adding an instruction to extract a field of a struct which lies on the top of stack by value
-                        // also this abuses push(0) to get index of the next free stack slot on top of the stack
-                        // and then load_address() to convert this index to the stack pointer (sp)
-                        @assert(deref)
-                        generate_expression(&*dot.sub, deref = true) // value
-                        builder.build_push(0) // value, index of sp
-                        builder.build_const_int(-slots_for_size(dot.sub_type.size)) // value, index of sp, -struct slots
-                        builder.build_add(.I64) // value, index of value
-                        builder.build_load_address() // value, ^value
-                        builder.build_push(0) // value, ^value, index of sp
-                        builder.build_load_address() // value, ^value, sp
-                        builder.build_const_int(member.offset - dot.sub_type.size - @sizeof(^void)) // value, ^value, sp, offset(sp)
-                        builder.build_add(.I64) // value, ^value, ^field
-                        builder.build_load(member.typ.size) // value, ^value, field
-                        builder.build_store(member.typ.size) // field|value
-                        builder.build_pop(slots_for_size(dot.sub_type.size) - slots_for_size(member.typ.size)) // field
-                    }
-
-                    $address_mode, $lvalue -> {
-                        error_handler.report_error_at(dot.location, "generate_dot: not implemented: {}.{}, address_mode={}, lvalue={}", [dot.sub.typ, dot.name.name, address_mode, lvalue])
-                    }
-                }
-
-                // // @todo: deal with non l-values
-                // builder.build_const_int(member.offset)
-                // builder.build_add(.I64)
-
-                // if deref {
-                //     builder.build_load(dot.typ.size)
-                // } else {
-                //     // pointer is already on top of stack
-                // }
+                self.generate_struct_field_access(dot, deref, dot.symbol.StructMember)
             }
 
             TypeInfoType($ti) -> {

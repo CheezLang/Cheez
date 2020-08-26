@@ -4,14 +4,32 @@ io :: std.IO
 _ :: Main()
 Main :: () {
     f := Foo(123, "123")
-    // Foo.print(^f)
     fa := &f
 
-    io.print_string(fa.a)
-    io.print_string((&f).a)
+    f.a = "123"
     io.print_string(f.a)
-    io.print_string(Foo(456, "456").a)
+    f.print()
+    io.print_string(f.a)
 
+    f.a = "123"
+    io.print_string(f.a)
+    fa.print()
+    io.print_string(f.a)
+
+    f.a = "123"
+    io.print_string(f.a)
+    f.print2()
+    io.print_string(f.a)
+
+    f.a = "123"
+    io.print_string(f.a)
+    fa.print2()
+    io.print_string(f.a)
+
+    // io.print_string(fa.a)
+    // io.print_string((&f).a)
+    // io.print_string(f.a)
+    // io.print_string(Foo(456, "456").a)
 }
 
 Foo :: struct {
@@ -20,8 +38,18 @@ Foo :: struct {
 }
 
 impl Foo {
-    print :: (self: ^Foo) {
-        io.print_string(self.a)
+    test :: "hi"
+
+    print :: (self: &Foo) {
+        // _print("print(): ")
+        // io.print_string(self.a)
+        self.a = "456"
+    }
+
+    print2 :: (self: Foo) {
+        // _print("print2(): ")
+        // io.print_string(self.a)
+        self.a = "456"
     }
 }
 

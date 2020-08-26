@@ -411,7 +411,6 @@ impl CompileNode {
 
         return match node {
         // result : &AstNode = match node {
-            AstArgument($arg)       -> compile_argument(arg, ctx)
             AstArray($arr)          -> compile_array(arr, ctx)
             AstArrayType($arr)      -> compile_array_type(arr, ctx)
             AstAssignment($ass)     -> compile_assignment(ass, ctx)
@@ -578,6 +577,7 @@ impl CompileNode {
                     return dot
                 }
 
+                // check if function is in typeinfo
                 func : ^TypeInfoImplFunction = null
                 for(by_ref=true) ti.impl_funcs {
                     if it.name == name {
@@ -611,7 +611,93 @@ impl CompileNode {
                     }
                 }
                 
-                // @todo: find functions with this name
+                // search for function in impl blocks
+                symbol : Option[Symbol] = None
+
+                // @TODO: somehow get symbol of type
+                // match AstNode.get_original_symbol(&*dot.sub) {
+                //     Some($original_symbol) -> match original_symbol {
+                //         .OriginalNode($node) -> {
+                //             symbol = node.scope.get_impl_symbol(dot.sub_type, dot.name.name)
+                //         }
+
+                //         _ -> @assert(false)
+                //     }
+                //     None -> {}
+                // }
+
+                if symbol == .None {
+                    symbol = dot.scope.get_impl_symbol(dot.sub_type, dot.name.name)
+                }
+
+                match &symbol {
+                    Some($symbol) -> {
+                        dot.original_symbol = Some(*symbol)
+                        dot.typ, dot.value = get_type_and_value_of_symbol(symbol)
+
+                        if dot.value == .Poison {
+                            poison(dot)
+                            return dot
+                        }
+
+                        func_type := match dot.typ {
+                            TypeInfoFunction($ti_func) -> ti_func
+                            _ -> {
+                                workspace.error_handler.report_error_at(dot.name.location, "'{}' is not a function but '{}'", [dot.name.name, dot.typ])
+                                poison(dot)
+                                return dot
+                            }
+                        }
+
+                        if func_type.param_types.length == 0 {
+                            workspace.error_handler.report_error_at(dot.name.location, "Impl function '{}' has no self parameter. Type is '{}'", [dot.name.name, dot.typ])
+                            poison(dot)
+                            return dot
+                        }
+
+                        self_param_type := *func_type.param_types[0]
+
+                        match self_param_type {
+                            $ti if ti == dot.sub.typ -> {
+                                // ok, nothing to do
+                            }
+                            TypeInfoReference($ti) -> {
+                                if dot.address_mode == .Value {
+                                    original_sub = workspace.new_ast(AstUnary(
+                                        id          = -1
+                                        location    = original_sub.location
+                                        scope       = original_sub.scope
+                                        sub         = &*original_sub
+                                        operator    = if ti.is_mut then .RefMut else .Ref
+                                    ))
+                                }
+                            }
+                            _ -> {
+                                if dot.address_mode == .Address {
+                                    original_sub = workspace.new_ast(AstUnary(
+                                        id          = -1
+                                        location    = original_sub.location
+                                        scope       = original_sub.scope
+                                        sub         = &*original_sub
+                                        operator    = .Deref
+                                    ))
+                                }
+                            }
+                        }
+
+                        return compile_node(&*workspace.new_ast(AstUfc(
+                            id          = -1
+                            location    = dot.location
+                            scope       = dot.scope
+                            typ         = dot.typ
+                            value_expr  = &*original_sub
+                            symbol      = *symbol
+                            value       = dot.value
+                        )), ctx)
+                    }
+
+                    None -> {}
+                }
 
                 workspace.error_handler.report_error_at(dot.name.location, "Struct '{}' has no member or function '{}'", [ti.name, name])
                 poison(dot)
@@ -646,44 +732,6 @@ impl CompileNode {
                     None -> {}
                 }
 
-                // impl_func : ^AstFunction = null
-                // scope := dot.scope
-                // while scope != null #label outer_loop {
-                //     match &scope.impls {
-                //         Some($impls) -> {
-                //             for(by_ref=false) imp in impls {
-                //                 wait_until(imp.target_expr.typ != null, {
-                //                     workspace.error_handler.report_error_at(dot.location, "Should this error happen?")
-                //                 })
-
-                //                 if !typ.matches_pattern(imp.target_expr.value.as_type()) then continue
-
-                //                 match imp.sub_scope.get_symbol_local(dot.name.name) {
-                //                     Some($symbol) -> {
-                //                         dot.original_symbol = Some(*symbol)
-                //                         dot.typ, dot.value = get_type_and_value_of_symbol(symbol)
-                //                         break outer_loop
-                //                     }
-
-                //                     None -> {}
-                //                 }
-                //             }
-                //         }
-
-                //         None -> {}
-                //     }
-
-                //     if scope == scope_of_type_definition {
-                //         break
-                //     }
-
-                //     scope = scope.parent
-
-                //     if scope == null and scope_of_type_definition != null {
-                //         scope = scope_of_type_definition
-                //     }
-                // }
-
                 if dot.typ == null {
                     workspace.error_handler.report_error_at(dot.location, "Unknown symbol '{}' in type {}", [dot.name.name, typ])
                     poison(dot)
@@ -714,6 +762,37 @@ impl CompileNode {
         return dot
     }
 
+    borrow_mutably :: (&Self, node: &AstNode, deref: bool) -> bool {
+        if deref {
+            match node.typ {
+                TypeInfoReference($ti) -> { return ti.is_mut }
+                TypeInfoPointer($ti) -> { return ti.is_mut }
+                _ -> {}
+            }
+        }
+
+        return match node {
+            AstIdentifier($id) -> match id.symbol {
+                .Decl($decl) -> decl.mutable
+                _ -> false
+            }
+
+            AstDot($dot) -> {
+                @assert(dot.sub != null)
+                self.borrow_mutably(&*dot.sub, true)
+            }
+
+            AstUnary($un) if un.operator == .Deref -> {
+                self.borrow_mutably(&*un.sub, true)
+            }
+
+            $node -> {
+                @assert(false)
+                false
+            }
+        }
+    }
+
     compile_assignment :: (&Self, ass: &AstAssignment, ctx: CNContext) -> &AstNode {
         // @todo: check if assignment is of form <expr>[<index>] = <value>
         // and the []set operator is overridden
@@ -724,6 +803,11 @@ impl CompileNode {
         handle_poison(ass, ass.pattern)
 
         // @todo: check if pattern is lvalue
+        if !AstNode.has_flags(ass.pattern, .LValue) {
+            workspace.error_handler.report_error_at(ass.pattern.location, "Can't assign to non-lvalue")
+            poison(ass)
+            return ass
+        }
 
         ass.value_expr.scope = ass.scope
         ass.value_expr <- compile_node(ass.value_expr, ctx.with_expected(ass.pattern.typ))
@@ -735,6 +819,12 @@ impl CompileNode {
                 ass.value_expr.location,
                 "Can't assign value of type '{}' to pattern of type '{}'",
                 [ass.value_expr.typ, ass.pattern.typ])
+            poison(ass)
+            return ass
+        }
+
+        if !self.borrow_mutably(ass.pattern, false) {
+            workspace.error_handler.report_error_at(ass.pattern.location, "Can't assign to immutable pattern")
             poison(ass)
             return ass
         }
@@ -1755,14 +1845,6 @@ impl CompileNode {
         return id
     }
 
-    compile_argument :: (&Self, arg: &AstArgument, ctx: CNContext) -> &AstNode {
-        arg.value_expr.scope = arg.scope
-        arg.value_expr <- compile_node(arg.value_expr, ctx)
-        arg.typ = arg.value_expr.typ
-        arg.value = arg.value_expr.value
-        return arg
-    }
-
     compile_cast :: (&Self, cst: &AstCast, ctx: CNContext) -> &AstNode {
         if cst.type_expr == null {
             workspace.error_handler.report_error_at(cst.location, "Auto cast not implemented yet.")
@@ -1809,6 +1891,34 @@ impl CompileNode {
         node.typ = @type_info(char)
         node.value = .Char(node.char_value)
         return node
+    }
+
+    compile_argument :: (&Self, call: &AstCall, arg: &AstArgument, param_name: string, param_type: ^TypeInfo, ctx: CNContext) -> bool {
+        arg.scope = call.scope
+        arg.value_expr.scope = call.scope
+        arg.value_expr = compile_node(arg.value_expr, ctx.with_expected(param_type))
+
+        if arg.value_expr.value == .Poison {
+            return true
+        } else {
+            match check_type(arg.value_expr, param_type, arg.value_expr.typ) {
+                Ok($new) -> {
+                    arg.value_expr = new
+                }
+
+                Err() -> {
+                    workspace.error_handler.report_error_at(arg.location,
+                        "Type of argument ({}) does not match type of parameter '{}' ({}). No implicit conversion available.",
+                        [arg.value_expr.typ, param_name, param_type])
+                    return true
+                }
+            }
+        }
+
+        arg.typ = arg.value_expr.typ
+        arg.value = arg.value_expr.value
+
+        return false
     }
 
     compile_call :: (&Self, call: &AstCall, ctx: CNContext) -> &AstNode {
@@ -1981,8 +2091,6 @@ impl CompileNode {
             }
 
             .Function($func) -> {
-                // call.typ = cast typ
-                // call.value = value
                 call.ast_function = func
 
                 if call.arguments.count() != func.params.length {
@@ -1991,20 +2099,10 @@ impl CompileNode {
                     return call
                 } else {
                     any_arg_failed := false
-                    for arg in &call.arguments {
+                    for(by_ref=false) arg in &call.arguments {
                         param := func.params[it_index]
-
-                        arg.scope = call.scope
-                        *arg = cast ^*compile_node(&**arg, ctx.with_expected(param.var_type))
-
-                        if arg.value == .Poison {
+                        if compile_argument(call, &*arg, param.name, param.var_type, ctx) {
                             any_arg_failed = true
-                        } else if !TypeInfo.same(arg.typ, param.var_type) {
-                            any_arg_failed = true
-                            workspace.error_handler.report_error_at(
-                                arg.location,
-                                "Type of argument ({}) does not match type of parameter '{}' ({}).",
-                                [arg.typ, param.name, param.var_type])
                         }
                     }
 
@@ -2031,20 +2129,23 @@ impl CompileNode {
                     return call
                 } else {
                     any_arg_failed := false
-                    for arg in &call.arguments {
+                    for(by_ref=false) arg in &call.arguments {
                         param_type := *func_type.param_types[it_index]
-                        arg.scope = call.scope
-                        *arg = cast ^*compile_node(&**arg, ctx.with_expected(param_type))
-
-                        if arg.value == .Poison {
+                        if compile_argument(call, &*arg, "", param_type, ctx) {
                             any_arg_failed = true
-                        } else if !TypeInfo.same(arg.typ, param_type) {
-                            any_arg_failed = true
-                            workspace.error_handler.report_error_at(
-                                arg.location,
-                                "Type of argument ({}) does not match type of parameter ({}).",
-                                [arg.typ, param_type])
                         }
+                        // arg.scope = call.scope
+                        // *arg = cast ^*compile_node(&**arg, ctx.with_expected(param_type))
+
+                        // if arg.value == .Poison {
+                        //     any_arg_failed = true
+                        // } else if !TypeInfo.same(arg.typ, param_type) {
+                        //     any_arg_failed = true
+                        //     workspace.error_handler.report_error_at(
+                        //         arg.location,
+                        //         "Type of argument ({}) does not match type of parameter ({}).",
+                        //         [arg.typ, param_type])
+                        // }
                     }
 
                     if any_arg_failed {
@@ -2066,20 +2167,23 @@ impl CompileNode {
                         [call.arguments.count(), func_type.param_types.length])
                 } else {
                     any_arg_failed := false
-                    for arg in &call.arguments {
+                    for(by_ref=false) arg in &call.arguments {
                         param_type := *func_type.param_types[it_index]
-                        arg.scope = call.scope
-                        *arg = cast ^*compile_node(&**arg, ctx.with_expected(param_type))
-
-                        if arg.value == .Poison {
+                        if compile_argument(call, &*arg, "", param_type, ctx) {
                             any_arg_failed = true
-                        } else if !TypeInfo.same(arg.typ, param_type) {
-                            any_arg_failed = true
-                            workspace.error_handler.report_error_at(
-                                arg.location,
-                                "Type of argument ({}) does not match type of parameter ({}).",
-                                [arg.typ, param_type])
                         }
+                        // arg.scope = call.scope
+                        // *arg = cast ^*compile_node(&**arg, ctx.with_expected(param_type))
+
+                        // if arg.value == .Poison {
+                        //     any_arg_failed = true
+                        // } else if !TypeInfo.same(arg.typ, param_type) {
+                        //     any_arg_failed = true
+                        //     workspace.error_handler.report_error_at(
+                        //         arg.location,
+                        //         "Type of argument ({}) does not match type of parameter ({}).",
+                        //         [arg.typ, param_type])
+                        // }
                     }
 
                     if any_arg_failed {
@@ -2401,6 +2505,33 @@ impl CompileNode {
 
         return decl
     }
+
+    check_type :: (&Self, node: &AstNode, target: ^TypeInfo, source: ^TypeInfo) -> Result[&AstNode, ()] {
+        if TypeInfo.same(target, source) {
+            return Ok(node)
+        }
+
+        match target, source {
+            // cast(&T) &mut T
+            TypeInfoReference($target), TypeInfoReference($source) if TypeInfo.same(target.target, source.target) and !target.is_mut and source.is_mut -> {
+                // @todo: create cast
+
+                // @temp
+                node.typ = target
+                return Ok(node)
+
+                // deref := workspace.new_ast(AstCast(
+                //     id          = -1
+                //     location    = dot.sub.location
+                //     scope       = dot.sub.scope
+                //     sub         = &*dot.sub
+                //     operator    = .Deref
+                // ))
+            }
+        }
+
+        return Err()
+    }
 }
 
 
@@ -2476,14 +2607,14 @@ impl TypeInfo {
 
             // TypeInfoPointer($a), TypeInfoPointer($b) -> a.is_mut == b.is_mut and same(a.target, b.target)
             // TypeInfoReference($a), TypeInfoReference($b) -> a.is_mut == b.is_mut and same(a.target, b.target)
-            TypeInfoPointer($a), TypeInfoPointer($b) -> same(a.target, b.target)
-            TypeInfoReference($a), TypeInfoReference($b) -> same(a.target, b.target)
+            TypeInfoPointer($a), TypeInfoPointer($b) -> same(a.target, b.target) and a.is_mut == b.is_mut
+            TypeInfoReference($a), TypeInfoReference($b) -> same(a.target, b.target) and a.is_mut == b.is_mut
 
             // temp
             // TypeInfoPointer($a), TypeInfoReference($b) -> a.is_mut == b.is_mut and same(a.target, b.target)
             // TypeInfoReference($a), TypeInfoPointer($b) -> a.is_mut == b.is_mut and same(a.target, b.target)
-            TypeInfoPointer($a), TypeInfoReference($b) -> same(a.target, b.target)
-            TypeInfoReference($a), TypeInfoPointer($b) -> same(a.target, b.target)
+            TypeInfoPointer($a), TypeInfoReference($b) -> same(a.target, b.target) and a.is_mut == b.is_mut
+            TypeInfoReference($a), TypeInfoPointer($b) -> same(a.target, b.target) and a.is_mut == b.is_mut
             //
 
             TypeInfoFunction($a), TypeInfoFunction($b) -> {
