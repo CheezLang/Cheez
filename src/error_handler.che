@@ -42,7 +42,7 @@ impl ErrorHandler for PrefixErrorHandler {
 
     report_error :: (&Self, message: string, args: []^any = [], prefix: string = "", details: [](fmt: string, args: []^any) = []) {
         pre := if prefix != "" {
-            fmt.format("{}][{}", [self.prefix, prefix])
+            fmt.format("{}][{}", [self.prefix.slice(), prefix])
         } else {
             self.prefix.clone()
         }
@@ -51,7 +51,7 @@ impl ErrorHandler for PrefixErrorHandler {
 
     report_error_at :: (&Self, location: Location, message: string, args: []^any = [], prefix: string = "", details: [](fmt: string, args: []^any) = []) {
         pre := if prefix != "" {
-            fmt.format("{}][{}", [self.prefix, prefix])
+            fmt.format("{}][{}", [self.prefix.slice(), prefix])
         } else {
             self.prefix.clone()
         }
@@ -78,7 +78,7 @@ impl ErrorHandler for ConsoleErrorHandler {
         return error_count > 0
     }
 
-    report_error :: (&Self, message: string, args: []^any = [], prefix: string = "", details: [](fmt: string, args: []^any) = []) {
+    report_error :: (&mut Self, message: string, args: []^any = [], prefix: string = "", details: [](fmt: string, args: []^any) = []) {
         mutex.lock()
         defer mutex.release()
 
@@ -93,7 +93,7 @@ impl ErrorHandler for ConsoleErrorHandler {
         io.set_console_foreground_color(io.ConsoleColor.White)
     }
 
-    report_error_at :: (&Self, location: Location, message: string, args: []^any = [], prefix: string = "", details: [](fmt: string, args: []^any) = []) {
+    report_error_at :: (&mut Self, location: Location, message: string, args: []^any = [], prefix: string = "", details: [](fmt: string, args: []^any) = []) {
         mutex.lock()
         defer mutex.release()
 
@@ -127,9 +127,9 @@ impl ErrorHandler for ConsoleErrorHandler {
         text := text_provider.get_text(location.file)
 
         // returns index of first character in the same line
-        find_start_of_line :: (text: string, byte_index: int) -> int {
+        find_start_of_line :: (text: string, mut byte_index: int) -> int {
             bytes := text.bytes
-            start := byte_index
+            mut start := byte_index
             byte_index -= 1
             while byte_index >= 0 and *bytes[byte_index] != u8('`n') {
                 start = byte_index
@@ -139,7 +139,7 @@ impl ErrorHandler for ConsoleErrorHandler {
         }
 
         // returns index of \n at the end of the same line
-        find_end_of_line :: (text: string, byte_index: int) -> int {
+        find_end_of_line :: (text: string, mut byte_index: int) -> int {
             bytes := text.bytes
             while byte_index < text.bytes.length and *bytes[byte_index] != u8('`n') {
                 byte_index += 1
@@ -148,9 +148,9 @@ impl ErrorHandler for ConsoleErrorHandler {
         }
 
         // 
-        get_line_range :: (text: string, start_line: int, byte_index: int, byte_length: int) -> RangeInclusive[int] {
+        get_line_range :: (text: string, start_line: int, mut byte_index: int, byte_length: int) -> RangeInclusive[int] {
             bytes    := text.bytes
-            end_line := start_line
+            mut end_line := start_line
             end      := byte_index + byte_length
 
             while byte_index < end, byte_index += 1 {
@@ -179,7 +179,7 @@ impl ErrorHandler for ConsoleErrorHandler {
             lines := get_line_range(text, location.line, location.byte_index, location.byte_length)
             max_line_digits := count_digits(lines.end)
 
-            index := location.byte_index
+            mut index := location.byte_index
             for line in lines {
                 // byte range of current line
                 line_range  := find_start_of_line(text, index) .. find_end_of_line(text, index)

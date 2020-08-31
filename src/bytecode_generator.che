@@ -21,25 +21,25 @@ use import value
 #export_scope
 
 CodeGenerator :: trait {
-    generate_code_for_function :: (&Self, func: ^AstFunction);
+    generate_code_for_function :: (&mut Self, func: ^AstFunction);
 }
 
 ByteCodeGenerator :: struct {
-    strings         : &StringDatabase
-    error_handler   : &ErrorHandler
-    allocator       : ^mem.Allocator
+    strings         : &mut StringDatabase
+    error_handler   : &mut ErrorHandler
+    allocator       : ^mut mem.Allocator
     builder         : InstructionBuilder
 
     variables       := Map[int, int].new()
 
-    function        : ^AstFunction = null
+    function        : ^mut AstFunction = null
 
     build_range_checks  := true
     build_null_checks   := true
 }
 
 impl ByteCodeGenerator {
-    new :: (strings: &StringDatabase, error_handler: &ErrorHandler, allocator: ^mem.Allocator) -> Rc[ByteCodeGenerator] {
+    new :: (strings: &mut StringDatabase, error_handler: &mut ErrorHandler, allocator: ^mut mem.Allocator) -> Rc[ByteCodeGenerator] {
         return Rc[ByteCodeGenerator].new(ByteCodeGenerator(
             strings         = strings
             error_handler   = error_handler
@@ -48,7 +48,7 @@ impl ByteCodeGenerator {
         ))
     }
 
-    allocate_function :: (&Self, name: string, path: string) -> ^CBCFunction {
+    allocate_function :: (&mut Self, name: string, path: string) -> ^mut CBCFunction {
         func := mem.alloc(CBCFunction, allocator)
         *func = CBCFunction(
             ast_function = function
@@ -61,7 +61,7 @@ impl ByteCodeGenerator {
 }
 
 impl CodeGenerator for ByteCodeGenerator {
-    generate_code_for_function :: (&Self, func: ^AstFunction) {
+    generate_code_for_function :: (&mut Self, func: ^mut AstFunction) {
         if function != null {
             error_handler.report_error_at(
                 func.location,
@@ -78,7 +78,7 @@ impl CodeGenerator for ByteCodeGenerator {
         builder.begin_function(cbc_func)
 
 
-        slot_index := 0
+        mut slot_index := 0
         for(reverse=true) param in &func.params {
             slot_index -= slots_for_size(param.var_type.size)
             variables.set(param.id, slot_index)
@@ -95,7 +95,7 @@ impl CodeGenerator for ByteCodeGenerator {
         func.bytecode = cbc_func
     }
 
-    generate_code_for_expression :: (&Self, node: &AstNode) -> ^CBCFunction {
+    generate_code_for_expression :: (&mut Self, node: &mut AstNode) -> ^mut CBCFunction {
         file_path := node.location.file
         cbc_func := self.allocate_function("$expr", file_path)
         builder.begin_function(cbc_func)
@@ -106,7 +106,7 @@ impl CodeGenerator for ByteCodeGenerator {
         return cbc_func
     }
 
-    generate_expression :: (&Self, node: &AstNode, deref: bool = true) {
+    generate_expression :: (&mut Self, node: &AstNode, deref: bool = true) {
         builder.set_location(node.location)
         match node {
             AstArgument($arg)       -> generate_argument(arg)
@@ -143,7 +143,7 @@ impl CodeGenerator for ByteCodeGenerator {
         }
     }
 
-    generate_value :: (&Self, value: &Value) {
+    generate_value :: (&mut Self, value: &Value) {
         match value {
             .Bool($val) -> {
                 builder.build_const_int(if *val then 1 else 0)
@@ -168,7 +168,7 @@ impl CodeGenerator for ByteCodeGenerator {
         }
     }
 
-    generate_assignment :: (&Self, ass: &AstAssignment) {
+    generate_assignment :: (&mut Self, ass: &AstAssignment) {
         match ass.pattern {
             // x = z
             AstIdentifier($id) -> match id.symbol {
@@ -258,7 +258,7 @@ impl CodeGenerator for ByteCodeGenerator {
         }
     }
 
-    generate_array :: (&Self, arr: &AstArray) {
+    generate_array :: (&mut Self, arr: &AstArray) {
         builder.set_location(arr.location)
 
         // pushes the array and then the index
@@ -278,7 +278,7 @@ impl CodeGenerator for ByteCodeGenerator {
         builder.build_pop(1)
     }
 
-    generate_decl :: (&Self, decl: &AstDecl) {
+    generate_decl :: (&mut Self, decl: &AstDecl) {
         builder.set_location(decl.location)
         builder.build_noop()
 
@@ -291,7 +291,7 @@ impl CodeGenerator for ByteCodeGenerator {
         }
     }
 
-    generate_unary :: (&Self, un: &AstUnary) {
+    generate_unary :: (&mut Self, un: &AstUnary) {
         match un.operator {
             .Not -> {
                 generate_expression(un.sub)
@@ -326,7 +326,7 @@ impl CodeGenerator for ByteCodeGenerator {
         }
     }
 
-    generate_binary :: (&Self, bin: &AstBinary) {
+    generate_binary :: (&mut Self, bin: &AstBinary) {
         generate_expression(bin.left)
         generate_expression(bin.right)
         builder.set_location(bin.location)
@@ -365,7 +365,7 @@ impl CodeGenerator for ByteCodeGenerator {
         }
     }
 
-    generate_if :: (&Self, iff: &AstIf) {
+    generate_if :: (&mut Self, iff: &AstIf) {
         builder.set_location(iff.location)
         
         // condition
@@ -395,7 +395,7 @@ impl CodeGenerator for ByteCodeGenerator {
         builder.fix_branch(br_end, l_end)
     }
 
-    generate_index :: (&Self, node: &AstIndex) {
+    generate_index :: (&mut Self, node: &AstIndex) {
         match node.sub.typ {
             TypeInfoArray($ti) -> match node.index.typ {
                 TypeInfoInt(_) -> {
@@ -432,7 +432,7 @@ impl CodeGenerator for ByteCodeGenerator {
         }
     }
 
-    generate_loop :: (&Self, lop: &AstLoop) {
+    generate_loop :: (&mut Self, lop: &AstLoop) {
         builder.set_location(lop.location)
         loop_start := builder.next()
         generate_expression(lop.body)
@@ -440,22 +440,22 @@ impl CodeGenerator for ByteCodeGenerator {
         builder.build_branch(loop_start)
     }
 
-    generate_for :: (&Self, forr: &AstFor) {
+    generate_for :: (&mut Self, forr: &AstFor) {
         builder.set_location(forr.location)
         builder.build_const_int(0)
     }
 
-    generate_break :: (&Self, brake: &AstBreak) {
+    generate_break :: (&mut Self, brake: &AstBreak) {
         builder.set_location(brake.location)
         builder.build_const_int(0)
     }
 
-    generate_continue :: (&Self, cont: &AstContinue) {
+    generate_continue :: (&mut Self, cont: &AstContinue) {
         builder.set_location(cont.location)
         builder.build_const_int(0)
     }
 
-    generate_return :: (&Self, ret: &AstReturn) {
+    generate_return :: (&mut Self, ret: &AstReturn) {
         builder.set_location(ret.location)
 
         if ret.value_expr != null {
@@ -467,7 +467,7 @@ impl CodeGenerator for ByteCodeGenerator {
         }
     }
 
-    generate_struct_field_access :: (&Self, dot: &AstDot, deref: bool, member: ^TypeInfoStructMember) {
+    generate_struct_field_access :: (&mut Self, dot: &AstDot, deref: bool, member: ^TypeInfoStructMember) {
         match dot.address_mode, AstNode.has_flags(dot, .LValue) {
             use AddressMode
             Address, true -> {
@@ -523,7 +523,7 @@ impl CodeGenerator for ByteCodeGenerator {
         }
     }
 
-    generate_dot :: (&Self, dot: &AstDot, deref: bool) {
+    generate_dot :: (&mut Self, dot: &AstDot, deref: bool) {
         builder.set_location(dot.location)
 
         name := dot.name.name
@@ -552,18 +552,18 @@ impl CodeGenerator for ByteCodeGenerator {
         }
     }
 
-    generate_defer :: (&Self, def: &AstDefer) {
+    generate_defer :: (&mut Self, def: &AstDefer) {
         error_handler.report_error_at(def.location, "generate_defer: not implemented")
         builder.set_location(def.location)
         builder.build_const_int(0)
     }
 
-    generate_bool :: (&Self, bol: &AstBool) {
+    generate_bool :: (&mut Self, bol: &AstBool) {
         builder.set_location(bol.location)
         builder.build_const_int(if bol.bool_value then 1 else 0)
     }
 
-    generate_string :: (&Self, str: &AstString) {
+    generate_string :: (&mut Self, str: &AstString) {
         builder.set_location(str.location)
         // @! strings are length first, then pointer
         // same as slices
@@ -571,11 +571,11 @@ impl CodeGenerator for ByteCodeGenerator {
         builder.build_const_int(cast str.string_value.bytes.data)
     }
 
-    generate_argument :: (&Self, arg: &AstArgument) {
+    generate_argument :: (&mut Self, arg: &AstArgument) {
         generate_expression(arg.value_expr)
     }
 
-    generate_block :: (&Self, block: &AstBlock) {
+    generate_block :: (&mut Self, block: &AstBlock) {
         builder.set_location(block.location)
         for child in &block.children {
             generate_expression(&**child)
@@ -590,7 +590,7 @@ impl CodeGenerator for ByteCodeGenerator {
         builder.build_noop()
     }
 
-    generate_cast :: (&Self, cst: &AstCast) {
+    generate_cast :: (&mut Self, cst: &AstCast) {
         from := cst.value_expr.typ
         to := cst.typ
 
@@ -664,7 +664,7 @@ impl CodeGenerator for ByteCodeGenerator {
         }
     }
 
-    generate_call :: (&Self, call: &AstCall) {
+    generate_call :: (&mut Self, call: &AstCall) {
         builder.set_location(call.location)
         builder.build_noop()
 
@@ -755,16 +755,16 @@ impl CodeGenerator for ByteCodeGenerator {
         // }
     }
 
-    generate_char_literal :: (&Self, cha: &AstChar) {
+    generate_char_literal :: (&mut Self, cha: &AstChar) {
         builder.set_location(cha.location)
         builder.build_const_char(cha.char_value)
     }
 
-    generate_const_decl :: (&Self, decl: &AstConstDecl) {
+    generate_const_decl :: (&mut Self, decl: &AstConstDecl) {
         // do nothing
     }
 
-    generate_number_literal :: (&Self, num: &AstNumberLiteral) {
+    generate_number_literal :: (&mut Self, num: &AstNumberLiteral) {
         builder.set_location(num.location)
 
         match num.value {
@@ -773,7 +773,7 @@ impl CodeGenerator for ByteCodeGenerator {
         }
     }
 
-    generate_identifier :: (&Self, id: &AstIdentifier, deref: bool) {
+    generate_identifier :: (&mut Self, id: &AstIdentifier, deref: bool) {
         builder.set_location(id.location)
         match id.symbol {
             .Decl($decl) -> match self.variables.get(decl.id) {
@@ -830,13 +830,13 @@ impl CodeGenerator for ByteCodeGenerator {
 }
 
 InstructionBuilder :: struct {
-    function            : ^CBCFunction
+    function            : ^mut CBCFunction
     current_location    : Location
-    strings             : &StringDatabase
+    strings             : &mut StringDatabase
 }
 
 impl InstructionBuilder {
-    new :: (strings: &StringDatabase) -> InstructionBuilder {
+    new :: (strings: &mut StringDatabase) -> InstructionBuilder {
         return InstructionBuilder(
             function            = null
             current_location    = Location(line = -1, column = -1)
@@ -844,24 +844,24 @@ impl InstructionBuilder {
         )
     }
 
-    begin_function :: (&Self, func: ^CBCFunction) {
+    begin_function :: (&mut Self, func: ^mut CBCFunction) {
         current_location = Location(line = -1, column = -1)
         function = func
     }
 
-    end_function :: (&Self) {
+    end_function :: (&mut Self) {
         function = null
     }
 
-    code_view :: (&Self) -> []u64 {
+    code_view :: (&mut Self) -> []u64 {
         return function.instructions.slice()
     }
 
-    fix_branch :: (&Self, branch: int, address: int) {
+    fix_branch :: (&mut Self, branch: int, address: int) {
         *function.instructions[branch] = u64(address)
     }
 
-    set_location :: (&Self, location: Location) {
+    set_location :: (&mut Self, location: Location) {
         locations := &function.debug_info.locations
         if locations.count() > 0 and locations.peek_last().count == 0 {
             locations.peek_last().location = location
@@ -871,7 +871,7 @@ impl InstructionBuilder {
         current_location = location
     }
 
-    add_local :: (&Self, id: int, name: string, type_info: ^TypeInfo) -> int {
+    add_local :: (&mut Self, id: int, name: string, type_info: ^TypeInfo) -> int {
         // debug info
         function.debug_info.locals.add(VariableInfo(id, name, function.local_slots, type_info))
 
@@ -881,7 +881,7 @@ impl InstructionBuilder {
         return current_size
     }
 
-    next :: (&Self) -> int {
+    next :: (&mut Self) -> int {
         return function.instructions.get_length()
     }
 
@@ -894,247 +894,247 @@ impl InstructionBuilder {
         }
     }
 
-    build_noop :: (&Self) {
+    build_noop :: (&mut Self) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.Noop)
     }
 
-    build_push :: (&Self, slots: int) {
+    build_push :: (&mut Self, slots: int) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.Push)
         function.instructions.add(cast slots)
     }
 
-    build_pop :: (&Self, slots: int) {
+    build_pop :: (&mut Self, slots: int) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.Pop)
         function.instructions.add(cast slots)
     }
 
-    build_dup :: (&Self, slots: int) {
+    build_dup :: (&mut Self, slots: int) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.Dup)
         function.instructions.add(cast slots)
     }
 
-    build_const_char :: (&Self, value: char) {
+    build_const_char :: (&mut Self, value: char) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.ConstInt)
         function.instructions.add(cast value)
     }
 
-    build_const_int :: (&Self, value: int) {
+    build_const_int :: (&mut Self, value: int) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.ConstInt)
         function.instructions.add(cast value)
     }
 
-    build_const_float :: (&Self, value: f64) {
+    build_const_float :: (&mut Self, value: f64) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.ConstFloat)
         function.instructions.add(*cast(^u64)^value)
     }
 
-    build_load_address :: (&Self) {
+    build_load_address :: (&mut Self) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.LoadAddress)
     }
 
-    build_address_of :: (&Self, index: int) {
+    build_address_of :: (&mut Self, index: int) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.AddressOf)
         function.instructions.add(*cast(^u64)^index)
     }
 
-    build_load :: (&Self, bytes: int) {
+    build_load :: (&mut Self, bytes: int) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.Load)
         function.instructions.add(cast bytes)
     }
 
-    build_store :: (&Self, bytes: int) {
+    build_store :: (&mut Self, bytes: int) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.Store)
         function.instructions.add(cast bytes)
     }
 
-    build_load_local :: (&Self, index: int, bytes: int) {
+    build_load_local :: (&mut Self, index: int, bytes: int) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.LoadLocal)
         function.instructions.add(*cast(^u64)^index)
         function.instructions.add(cast bytes)
     }
 
-    build_store_local :: (&Self, index: int, bytes: int) {
+    build_store_local :: (&mut Self, index: int, bytes: int) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.StoreLocal)
         function.instructions.add(*cast(^u64)^index)
         function.instructions.add(cast bytes)
     }
 
-    build_store_stack :: (&Self, index: int, bytes: int) {
+    build_store_stack :: (&mut Self, index: int, bytes: int) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.StoreStack)
         function.instructions.add(cast index)
         function.instructions.add(cast bytes)
     }
 
-    build_cast_float_to_double :: (&Self) {
+    build_cast_float_to_double :: (&mut Self) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.CastFD)
     }
 
-    build_cast_double_to_float :: (&Self) {
+    build_cast_double_to_float :: (&mut Self) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.CastDF)
     }
 
-    build_cast_double_to_signed :: (&Self) {
+    build_cast_double_to_signed :: (&mut Self) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.CastDS)
     }
 
-    build_cast_double_to_unsigned :: (&Self) {
+    build_cast_double_to_unsigned :: (&mut Self) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.CastDU)
     }
 
-    build_cast_signed_to_double :: (&Self) {
+    build_cast_signed_to_double :: (&mut Self) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.CastSD)
     }
 
-    build_cast_unsigned_to_double :: (&Self) {
+    build_cast_unsigned_to_double :: (&mut Self) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.CastUD)
     }
 
-    build_cast_signed :: (&Self, from: InstNumTyp, to: InstNumTyp) {
+    build_cast_signed :: (&mut Self, from: InstNumTyp, to: InstNumTyp) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.CastSigned)
         function.instructions.add(cast from)
         function.instructions.add(cast to)
     }
 
-    build_cast_unsigned :: (&Self, from: InstNumTyp, to: InstNumTyp) {
+    build_cast_unsigned :: (&mut Self, from: InstNumTyp, to: InstNumTyp) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.CastUnsigned)
         function.instructions.add(cast from)
         function.instructions.add(cast to)
     }
 
-    build_cast_signed_to_unsigned :: (&Self) {
+    build_cast_signed_to_unsigned :: (&mut Self) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.CastSU)
     }
 
-    build_cast_unsigned_to_signed :: (&Self) {
+    build_cast_unsigned_to_signed :: (&mut Self) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.CastUS)
     }
 
-    build_add :: (&Self, typ: InstNumTyp) {
+    build_add :: (&mut Self, typ: InstNumTyp) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.Add)
         function.instructions.add(cast typ)
     }
 
-    build_sub :: (&Self, typ: InstNumTyp) {
+    build_sub :: (&mut Self, typ: InstNumTyp) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.Sub)
         function.instructions.add(cast typ)
     }
 
-    build_mul :: (&Self, typ: InstNumTyp) {
+    build_mul :: (&mut Self, typ: InstNumTyp) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.Mul)
         function.instructions.add(cast typ)
     }
 
-    build_div :: (&Self, typ: InstNumTyp) {
+    build_div :: (&mut Self, typ: InstNumTyp) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.Div)
         function.instructions.add(cast typ)
     }
 
-    build_mod :: (&Self, typ: InstNumTyp) {
+    build_mod :: (&mut Self, typ: InstNumTyp) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.Mod)
         function.instructions.add(cast typ)
     }
 
-    build_and :: (&Self) {
+    build_and :: (&mut Self) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.And)
     }
 
-    build_or :: (&Self) {
+    build_or :: (&mut Self) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.Or)
     }
 
-    build_neg :: (&Self, typ: InstNumTyp) {
+    build_neg :: (&mut Self, typ: InstNumTyp) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.Neg)
         function.instructions.add(cast typ)
     }
 
-    build_not :: (&Self) {
+    build_not :: (&mut Self) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.Not)
     }
 
-    build_ieq :: (&Self, typ: InstNumTyp) {
+    build_ieq :: (&mut Self, typ: InstNumTyp) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.Ieq)
         function.instructions.add(cast typ)
     }
 
-    build_ine :: (&Self, typ: InstNumTyp) {
+    build_ine :: (&mut Self, typ: InstNumTyp) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.Ine)
         function.instructions.add(cast typ)
     }
 
-    build_ilt :: (&Self, typ: InstNumTyp) {
+    build_ilt :: (&mut Self, typ: InstNumTyp) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.Ilt)
         function.instructions.add(cast typ)
     }
 
-    build_ile :: (&Self, typ: InstNumTyp) {
+    build_ile :: (&mut Self, typ: InstNumTyp) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.Ile)
         function.instructions.add(cast typ)
     }
 
-    build_igt :: (&Self, typ: InstNumTyp) {
+    build_igt :: (&mut Self, typ: InstNumTyp) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.Igt)
         function.instructions.add(cast typ)
     }
 
-    build_ige :: (&Self, typ: InstNumTyp) {
+    build_ige :: (&mut Self, typ: InstNumTyp) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.Ige)
         function.instructions.add(cast typ)
     }
 
-    build_branch :: (&Self, address: int) -> int {
+    build_branch :: (&mut Self, address: int) -> int {
         add_debug_info_line()
         function.instructions.add(cast Instruction.Branch)
         function.instructions.add(cast address)
         return function.instructions.count() - 1
     }
 
-    build_branch_if :: (&Self, address: int) -> int {
+    build_branch_if :: (&mut Self, address: int) -> int {
         add_debug_info_line()
         function.instructions.add(cast Instruction.BranchIf)
         function.instructions.add(cast address)
         return function.instructions.count() - 1
     }
 
-    build_call :: (&Self, name: string, arity: int = 0) {
+    build_call :: (&mut Self, mut name: string, arity: int = 0) {
         add_debug_info_line()
         name = strings.intern(name)
         function.instructions.add(cast Instruction.Call)
@@ -1143,13 +1143,13 @@ impl InstructionBuilder {
         function.instructions.add(cast arity)
     }
 
-    build_native_call :: (&Self, func: ^NativeFunctionWrapper) {
+    build_native_call :: (&mut Self, func: ^NativeFunctionWrapper) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.NativeCall)
         function.instructions.add(cast func)
     }
 
-    build_native_call2 :: (&Self, wrapper: NativeFunctionWrapper2, func: fn(), arg_slots: int) {
+    build_native_call2 :: (&mut Self, wrapper: NativeFunctionWrapper2, func: fn(), arg_slots: int) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.NativeCall2)
         function.instructions.add(*cast(^uint) ^wrapper)
@@ -1157,7 +1157,7 @@ impl InstructionBuilder {
         function.instructions.add(cast arg_slots)
     }
 
-    build_comp_call :: (&Self, ast_func: ^AstFunction) {
+    build_comp_call :: (&mut Self, ast_func: ^AstFunction) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.CompCall)
         function.instructions.add(cast ast_func)
@@ -1165,32 +1165,32 @@ impl InstructionBuilder {
         function.instructions.add(0)
     }
 
-    build_return :: (&Self) {
+    build_return :: (&mut Self) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.Return)
     }
 
-    build_return_void :: (&Self) {
+    build_return_void :: (&mut Self) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.ReturnVoid)
     }
 
-    build_halt :: (&Self) {
+    build_halt :: (&mut Self) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.Halt)
     }
 
-    build_check_range :: (&Self) {
+    build_check_range :: (&mut Self) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.CheckRange)
     }
 
-    build_check_null :: (&Self) {
+    build_check_null :: (&mut Self) {
         add_debug_info_line()
         function.instructions.add(cast Instruction.CheckNull)
     }
 
-    build_panic :: (&Self, msg: string) {
+    build_panic :: (&mut Self, mut msg: string) {
         add_debug_info_line()
         msg = strings.intern(msg)
         function.instructions.add(cast Instruction.Panic)

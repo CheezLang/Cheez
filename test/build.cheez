@@ -1,35 +1,52 @@
 std :: import "std.cheez"
 io :: std.IO
 
+foo :: (a: &int) {}
+bar :: (a: &mut int) {}
+
 _ :: Main()
 Main :: () {
-    f := Foo(123, "123")
-    fa := &f
+    mut a : int = 5
+    ar_mut : &mut int = &mut a
+    ar : &int = &a
+
+    foo(ar_mut)
+    foo(ar)
+    bar(ar_mut)
+    // bar(ar)
+
+    mut f := Foo(123, "123")
+    fa := &mut f
 
     f.a = "123"
     io.print_string(f.a)
     f.print()
     io.print_string(f.a)
+    io.print_string("------")
 
     f.a = "123"
     io.print_string(f.a)
     fa.print()
     io.print_string(f.a)
+    io.print_string("------")
 
     f.a = "123"
     io.print_string(f.a)
     f.print2()
     io.print_string(f.a)
+    io.print_string("------")
 
     f.a = "123"
     io.print_string(f.a)
     fa.print2()
     io.print_string(f.a)
+    io.print_string("------")
 
-    // io.print_string(fa.a)
-    // io.print_string((&f).a)
-    // io.print_string(f.a)
-    // io.print_string(Foo(456, "456").a)
+    f.a = "123"
+    io.print_string(fa.a)
+    io.print_string((&f).a)
+    io.print_string(f.a)
+    io.print_string(Foo(456, "456").a)
 }
 
 Foo :: struct {
@@ -40,15 +57,15 @@ Foo :: struct {
 impl Foo {
     test :: "hi"
 
-    print :: (self: &Foo) {
-        // _print("print(): ")
-        // io.print_string(self.a)
+    print :: (self: &mut Foo) {
+        _print("print(): ")
+        io.print_string(self.a)
         self.a = "456"
     }
 
-    print2 :: (self: Foo) {
-        // _print("print2(): ")
-        // io.print_string(self.a)
+    print2 :: (mut self: Foo) {
+        _print("print2(): ")
+        io.print_string(self.a)
         self.a = "456"
     }
 }

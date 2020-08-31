@@ -15,10 +15,10 @@ use import compiler
 #export_scope
 
 Scope :: struct {
-    parent          : ^Scope
+    parent          : ^mut Scope
     symbols         := Map[string, Symbol].new()
-    impls           := Option[Array[^AstImpl]].None
-    type_impl_map   := Option[Map[TypeId, Array[^AstImpl]]].None
+    impls           := Option[Array[^mut AstImpl]].None
+    type_impl_map   := Option[Map[TypeId, Array[^mut AstImpl]]].None
     mutex           := Option[Mutex].None
 
     // if true, this scope is for code executed at compile time
@@ -52,7 +52,7 @@ impl Scope {
         }
     }
 
-    define_value :: (&Self, name: string, typ: ^TypeInfo, val: Value) -> Result[(), ()] {
+    define_value :: (&mut Self, name: string, typ: ^TypeInfo, val: Value) -> Result[(), ()] {
         self.lock()
         defer self.release()
 
@@ -65,7 +65,7 @@ impl Scope {
         return Ok()
     }
 
-    define_function :: (&Self, name: string, func: &AstFunction) -> Result[(), ()] {
+    define_function :: (&mut Self, name: string, func: &AstFunction) -> Result[(), ()] {
         self.lock()
         defer self.release()
 
@@ -78,7 +78,7 @@ impl Scope {
         return Ok()
     }
 
-    define_decl :: (&Self, name: string, decl: &AstDecl) -> Result[(), ()] {
+    define_decl :: (&mut Self, name: string, decl: &AstDecl) -> Result[(), ()] {
         self.lock()
         defer self.release()
 
@@ -91,7 +91,7 @@ impl Scope {
         return Ok()
     }
 
-    define_const_decl :: (&Self, name: string, decl: &AstConstDecl) -> Result[(), ()] {
+    define_const_decl :: (&mut Self, name: string, decl: &AstConstDecl) -> Result[(), ()] {
         self.lock()
         defer self.release()
 
@@ -104,7 +104,7 @@ impl Scope {
         return Ok()
     }
 
-    define_native_function :: (&Self, name: string, wrapper: ^NativeFunctionWrapper) -> Result[(), ()] {
+    define_native_function :: (&mut Self, name: string, wrapper: ^NativeFunctionWrapper) -> Result[(), ()] {
         self.lock()
         defer self.release()
 
@@ -117,7 +117,7 @@ impl Scope {
         return Ok()
     }
 
-    define_symbol :: (&Self, name: string, symbol: Symbol) -> Result[(), ()] {
+    define_symbol :: (&mut Self, name: string, symbol: Symbol) -> Result[(), ()] {
         self.lock()
         defer self.release()
 
@@ -130,7 +130,7 @@ impl Scope {
         return Ok()
     }
 
-    get_symbol_local :: (&Self, name: string) -> Option[&Symbol] {
+    get_symbol_local :: (&Self, name: string) -> Option[&mut Symbol] {
         return symbols.get(name)
     }
 
@@ -180,8 +180,8 @@ impl Scope {
         }
     }
 
-    get_impl_symbol :: (&Self, typ: ^TypeInfo, name: string) -> Option[Symbol] {
-        scope := ^*self
+    get_impl_symbol :: (&mut Self, typ: ^TypeInfo, name: string) -> Option[Symbol] {
+        mut scope := ^*self
         while scope != null #label outer_loop {
             match &scope.impls {
                 Some($impls) -> {
@@ -212,24 +212,24 @@ impl Scope {
         return None
     }
 
-    register_impl :: (&Self, imp: ^AstImpl) {
+    register_impl :: (&mut Self, imp: ^mut AstImpl) {
         if self.impls == .None {
-            self.impls = Some(Array[^AstImpl].new())
+            self.impls = Some(Array[^mut AstImpl].new())
         }
 
         @assert(self.impls == .Some)
         self.impls.Some.add(imp)
     }
 
-    add_impl_for_type :: (&Self, imp: ^AstImpl) {
+    add_impl_for_type :: (&mut Self, imp: ^mut AstImpl) {
         if self.type_impl_map == .None {
-            self.type_impl_map = Some(Map[TypeId, Array[^AstImpl]].new())
+            self.type_impl_map = Some(Map[TypeId, Array[^mut AstImpl]].new())
         }
 
         @assert(self.type_impl_map == .Some)
 
         type_id := imp.target_expr.typ.id()
-        arr : &Array[^AstImpl] = self.type_impl_map.Some.get_or_insert(type_id, () => Array[^AstImpl].new(initial_capacity=1))
+        arr : &mut Array[^mut AstImpl] = self.type_impl_map.Some.get_or_insert(type_id, () => Array[^mut AstImpl].new(initial_capacity=1))
         arr.add(imp)
     }
 

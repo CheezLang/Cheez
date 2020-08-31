@@ -89,7 +89,7 @@ compile_files :: (files: []String, thread_count: int) {
     main_workspace := compiler.get().get_main_workspace()
 
     for(by_ref=true) file in files {
-        main_workspace.get().create_and_add_job(LoadFileJob.new(file.clone()))
+        main_workspace.get_mut().create_and_add_job(LoadFileJob.new(file.clone()))
     }
 
     compiler.get().user_defined_builtins.add((
@@ -149,17 +149,17 @@ compile_files :: (files: []String, thread_count: int) {
     ))
 
     start := get_time_milliseconds()
-    compiler.get().start_compilation()
-    compiler.get().wait_until_done()
+    compiler.get_mut().start_compilation()
+    compiler.get_mut().wait_until_done()
     end := get_time_milliseconds()
     dur := end - start
     g_logger.log("[Compiler] Compilation took {} ms", [dur])
 }
 
 FiberContext :: struct {
-    fiber   : ^Fiber
-    interp  : ^Interpreter
-    job     : ^CompilationJob = null
+    fiber   : ^mut Fiber
+    interp  : ^mut Interpreter
+    job     : ^mut CompilationJob = null
     thread  : u64 = -1
 }
 
@@ -183,14 +183,14 @@ impl Equatable[FunctionTypeWrapper] for FunctionTypeWrapper {
 SourceFile :: struct {
     path            : string
     content         : string
-    global_scope    : ^Scope
+    global_scope    : ^mut Scope
     nodes           := Array[^AstNode].create()
 }
 
 Workspace :: struct {
     id              : int
     _compiler       : ^void
-    jobs            := RingQueue[^CompilationJob].new()
+    jobs            := RingQueue[^mut CompilationJob].new()
 
     mutex           : Mutex
     mutex_ast       : Mutex
@@ -199,12 +199,12 @@ Workspace :: struct {
     mutex_scope     : Mutex
     mutex_type      : Mutex
 
-    error_handler   : ^ErrorHandler
+    error_handler   : ^mut ErrorHandler
     string_database : StringDatabase
 
-    all_nodes       := Array[^AstNode].create()
+    all_nodes       := Array[^mut AstNode].create()
 
-    structs         := Map[int, ^AstStruct].new()
+    structs         := Map[int, ^mut AstStruct].new()
     structs_mutex   := Mutex.new()
 
     string_sources_file := String.empty()
@@ -219,17 +219,17 @@ Workspace :: struct {
     next_ast_id     := 1
 
     // allocators
-    ast_allocator   : ^mem.Allocator
-    bc_allocator    : ^mem.Allocator
-    job_allocator   : ^mem.Allocator
-    scope_allocator : ^mem.Allocator
-    type_allocator  : ^mem.Allocator
+    ast_allocator   : ^mut mem.Allocator
+    bc_allocator    : ^mut mem.Allocator
+    job_allocator   : ^mut mem.Allocator
+    scope_allocator : ^mut mem.Allocator
+    type_allocator  : ^mut mem.Allocator
 }
 
 impl Workspace {
     new :: (id: int, compiler: &Compiler, error_handler: ^ErrorHandler) -> Rc[Workspace] {
         AllocatorType :: BumpAllocator
-        create_allocator :: (size: uint) -> ^mem.Allocator {
+        create_allocator :: (size: uint) -> ^mut mem.Allocator {
             allocator := mem.alloc(AllocatorType)
             *allocator = AllocatorType.new(size)
             return allocator
@@ -258,27 +258,27 @@ impl Workspace {
 
         // @todo: make these paths not absolute
         string_sources_file := fmt.format("string_sources_{}{}", [id, CHEEZ_FILE_EXTENSION])
-        workspace.get().string_sources_file = match fs.get_full_path(string_sources_file.slice()) {
+        workspace.get_mut().string_sources_file = match fs.get_full_path(string_sources_file.slice()) {
             Ok($path) -> path
             Err(_) -> string_sources_file.clone()
         }
         compiler.sources.set(workspace.get().string_sources_file.slice(), "".to_owned())
-        workspace.get().string_location.file = workspace.get().string_sources_file.slice()
+        workspace.get_mut().string_location.file = workspace.get().string_sources_file.slice()
         fs.write_file(workspace.get().string_sources_file.slice(), "")
 
         return workspace
     }
 
-    get_compiler :: (&Self) -> &Compiler {
-        return &*cast(^Compiler)_compiler
+    get_compiler :: (&Self) -> &mut Compiler {
+        return &mut *cast(^mut Compiler)_compiler
     }
 
-    add_load_file_job :: (&Self, filename: string) -> ^CompilationJob {
+    add_load_file_job :: (&mut Self, filename: string) -> ^mut CompilationJob {
         _ := add_load_file_job
         return create_and_add_job(LoadFileJob.new(filename.to_owned()))
     }
 
-    define_builtin_types :: (&Self, scope: &Scope) {
+    define_builtin_types :: (&mut Self, scope: &mut Scope) {
         // ints
         scope.define_value("u8",  @type_info(type), .Type(@type_info(u8)))
         scope.define_value("u16", @type_info(type), .Type(@type_info(u16)))
@@ -331,19 +331,19 @@ impl Workspace {
         mutex.release()
     }
 
-    get_file :: (&Self, path: string) -> Option[^SourceFile] {
+    get_file :: (&Self, path: string) -> Option[^mut SourceFile] {
         return match sources.get(path) {
             Some($file) -> Some(file)
             None -> None
         }
     }
 
-    load_file :: (&Self, path: string) -> Result[Option[^SourceFile], ()] {
+    load_file :: (&mut Self, path: string) -> Result[Option[^mut SourceFile], ()] {
         self.lock(&mutex)
         defer self.release(&mutex)
 
         return match sources.get(path) {
-            Some($source) -> Ok(Option[^SourceFile].None)
+            Some($source) -> Ok(Option[^mut SourceFile].None)
             None -> {
                 content := match get_compiler().get_source(path) {
                     Ok($content) -> content
@@ -356,7 +356,7 @@ impl Workspace {
                     content         = content
                     global_scope    = new_scope()
                 ))
-                result := ^*sources.at(path)
+                result := ^mut *sources.at(path)
 
                 define_builtin_types(&*result.global_scope)
                 // create mutex if multithreding enabled
@@ -369,7 +369,7 @@ impl Workspace {
         }
     }
 
-    add_string_source :: (&Self, content: string) -> Rc[Lexer] {
+    add_string_source :: (&mut Self, content: string) -> Rc[Lexer] {
         self.lock(&mutex)
         defer self.release(&mutex)
 
@@ -378,8 +378,8 @@ impl Workspace {
         fs.append_file(string_sources_file.slice(), content)
 
         lexer := Lexer.from_string(content, &string_database)
-        lexer.get().location = string_location
-        lexer.get().offset = string_location.byte_index
+        lexer.get_mut().location = string_location
+        lexer.get_mut().offset = string_location.byte_index
         string_location.byte_index = string_sources.get_length()
         string_location.line += content.count_char('`n')
         string_location.column = 1
@@ -387,30 +387,30 @@ impl Workspace {
         return lexer
     }
 
-    register_struct :: (&Self, typ: ^TypeInfoStruct, ast: ^AstStruct) {
+    register_struct :: (&mut Self, typ: ^TypeInfoStruct, ast: ^mut AstStruct) {
         self.lock(&mutex)
         defer self.release(&mutex)
 
         structs[int(typ)] = ast
     }
 
-    get_struct_ast :: (&Self, typ: ^TypeInfoStruct) -> Option[^AstStruct] {
+    get_struct_ast :: (&mut Self, typ: ^TypeInfoStruct) -> Option[^mut AstStruct] {
         self.lock(&mutex)
         defer self.release(&mutex)
 
         return match structs.get(int(typ)) {
-            Some($ast) -> Some(*ast)
+            Some($ast) -> Some(cast(^mut AstStruct) *ast)
             None -> None
         }
     }
 
-    create_and_add_job :: (&Self, job: $T) -> ^CompilationJob {
+    create_and_add_job :: (&mut Self, job: $T) -> ^mut CompilationJob {
         job_ptr := create_job(job)
         add_job(job_ptr)
         return job_ptr
     }
 
-    create_job :: (&Self, job: $T) -> ^CompilationJob {
+    create_job :: (&mut Self, job: $T) -> ^mut CompilationJob {
         self.lock(&mutex_job)
         defer self.release(&mutex_job)
 
@@ -421,17 +421,17 @@ impl Workspace {
         return ptr
     }
 
-    add_job :: (&Self, job: ^CompilationJob) {
+    add_job :: (&mut Self, job: ^mut CompilationJob) {
         self.lock(&mutex_job)
         defer self.release(&mutex_job)
         jobs.push(job)
     }
 
-    run_job :: (&Self, context: ^FiberContext) {
+    run_job :: (&mut Self, context: ^mut FiberContext) {
         context.job.execute()
     }
 
-    new_scope :: (&Self, parent: ^Scope = null, constant: bool = false) -> ^Scope {
+    new_scope :: (&mut Self, parent: ^mut Scope = null, constant: bool = false) -> ^mut Scope {
         self.lock(&mutex_scope)
         defer self.release(&mutex_scope)
 
@@ -443,7 +443,7 @@ impl Workspace {
         return scope
     }
 
-    new_type :: (&Self, type_info: $T) -> ^T {
+    new_type :: (&mut Self, type_info: $T) -> ^mut T {
         self.lock(&mutex_type)
         defer self.release(&mutex_type)
 
@@ -452,7 +452,7 @@ impl Workspace {
         return result
     }
 
-    new_module_type :: (&Self) -> ^TypeInfo {
+    new_module_type :: (&mut Self) -> ^mut TypeInfo {
         typ := self.new_type(TypeInfoModule(
             size        = 0
             alignment   = 1
@@ -463,7 +463,7 @@ impl Workspace {
         return typ
     }
 
-    poly_type :: (&Self) -> ^TypeInfo {
+    poly_type :: (&mut Self) -> ^mut TypeInfo {
         typ := self.new_type(TypeInfoPoly(
             size        = 0
             alignment   = 1
@@ -474,7 +474,7 @@ impl Workspace {
         return typ
     }
 
-    pointer_type :: (&Self, target: ^TypeInfo, mutable: bool) -> ^TypeInfo {
+    pointer_type :: (&mut Self, target: ^TypeInfo, mutable: bool) -> ^mut TypeInfo {
         size := match target {
             TypeInfoTrait(_) -> 16
             TypeInfoAny(_) -> 24
@@ -493,7 +493,7 @@ impl Workspace {
         return typ
     }
 
-    reference_type :: (&Self, target: ^TypeInfo, mutable: bool) -> ^TypeInfo {
+    reference_type :: (&mut Self, target: ^TypeInfo, mutable: bool) -> ^mut TypeInfo {
         size := match target {
             TypeInfoTrait(_) -> 16
             TypeInfoAny(_) -> 24
@@ -512,7 +512,7 @@ impl Workspace {
         return typ
     }
 
-    new_type_data_array :: (&Self, $T: type, count: int) -> []T {
+    new_type_data_array :: (&mut Self, $T: type, count: int) -> []mut T {
         self.lock(&mutex_type)
         defer self.release(&mutex_type)
 
@@ -521,7 +521,7 @@ impl Workspace {
         return result
     }
 
-    new_ast :: (&Self, ast: $T) -> ^T {
+    new_ast :: (&mut Self, ast: $T) -> ^mut T {
         self.lock(&mutex_ast)
         defer self.release(&mutex_ast)
 
@@ -532,7 +532,7 @@ impl Workspace {
         return result
     }
 
-    register_native_function_type :: (&Self, $FuncType: type) {
+    register_native_function_type :: (&mut Self, $FuncType: type) {
         self.lock(&mutex)
         defer self.release(&mutex)
 
@@ -541,10 +541,10 @@ impl Workspace {
             ArgTupleType :: @param_type_tuple(FuncType)
             slots : [(@sizeof(ArgTupleType) + 7) / 8]u64 = default
             args := &*cast(^ArgTupleType)slots.data
-            index := 0
+            mut index := 0
             @for_function_parameters(FuncType, (ArgType, i) => {
                 // args[i] = frame.get(index, ArgType)
-                ptr := cast(^ArgType)^args[i]
+                ptr := cast(^mut ArgType)^args[i]
                 *ptr = frame.get(i, ArgType)
                 // io.formatln("{} : {} = {}", [i, @typename(ArgType), args[i]])
 
@@ -572,7 +572,7 @@ impl Workspace {
         }
     }
 
-    get_native_function_wrapper :: (&Self, ti: ^TypeInfoFunction) -> Option[NativeFunctionWrapper2] {
+    get_native_function_wrapper :: (&mut Self, ti: ^TypeInfoFunction) -> Option[NativeFunctionWrapper2] {
         self.lock(&mutex)
         defer self.release(&mutex)
 
@@ -583,7 +583,7 @@ impl Workspace {
     }
 }
 
-g_compiler : ^Compiler = null
+mut g_compiler : ^mut Compiler = null
 Compiler :: struct {
     // there is a weird bug where the pointer to the  debug adapter at some point changes to point to the compiler
     // and thus overrides variables of the compiler
@@ -593,9 +593,9 @@ Compiler :: struct {
 
     workspaces      := Array[Rc[Workspace]].create()
 
-    fibers          := Array[^FiberContext].create(1024)
-    ready_fibers    := RingQueue[^FiberContext].new(10)
-    waiting_fibers  := RingQueue[^FiberContext].new(10)
+    fibers          := Array[^mut FiberContext].create(1024)
+    ready_fibers    := RingQueue[^mut FiberContext].new(10)
+    waiting_fibers  := RingQueue[^mut FiberContext].new(10)
     any_progress    := false
 
     mutex           : Mutex
@@ -603,7 +603,7 @@ Compiler :: struct {
     threads         : Array[Thread]
     active_threads  := 0
 
-    global_error_handler : ^ErrorHandler
+    global_error_handler : ^mut ErrorHandler
     string_database : StringDatabase
 
     code_runner     : Rc[CodeRunner]
@@ -641,7 +641,7 @@ impl TextProvider for Compiler {
 }
 
 impl Compiler {
-    new :: (thread_count: int, error_handler: ^ErrorHandler) -> Rc[Compiler] {
+    new :: (thread_count: int, error_handler: ^mut ErrorHandler) -> Rc[Compiler] {
         comp := Rc[Compiler].new(Compiler(
             mutex           = Mutex.new()
             thread_count    = thread_count
@@ -653,25 +653,25 @@ impl Compiler {
             code_runner     = Rc[CodeRunner].new(DefaultCodeRunner())
         ))
         g_compiler = ^*comp.get()
-        comp.get().global_error_handler.text_provider = ^*comp.get()
+        comp.get_mut().global_error_handler.text_provider = ^*comp.get()
 
 
         // create main workspace
-        comp.get().workspaces.add(Workspace.new(0, comp.get(), error_handler))
+        comp.get_mut().workspaces.add(Workspace.new(0, comp.get(), error_handler))
 
-        comp.get().thread_func_ptr = cast comp.get().thread_func;
+        comp.get_mut().thread_func_ptr = cast comp.get().thread_func;
         return comp
     }
 
-    lock :: (&Self) {
+    lock :: (&mut Self) {
         if threads.get_length() > 1 then mutex.lock()
     }
 
-    release :: (&Self) {
+    release :: (&mut Self) {
         if threads.get_length() > 1 then mutex.release()
     }
 
-    run_job :: (&Self, context: ^FiberContext) {
+    run_job :: (&mut Self, context: ^FiberContext) {
         context.job.execute()
     }
 
@@ -679,7 +679,7 @@ impl Compiler {
         return workspaces[0].clone()
     }
 
-    get_source :: (&Self, path: string) -> Result[string, ()] {
+    get_source :: (&mut Self, mut path: string) -> Result[string, ()] {
         self.lock()
         defer self.release()
         
@@ -704,7 +704,7 @@ impl Compiler {
         return Ok(sources[path].slice())
     }
 
-    create_workspace :: (&Self) -> ^Workspace {
+    create_workspace :: (&mut Self) -> ^Workspace {
         _ := create_workspace
         workspaces.add(Workspace.new(workspaces.count(), self, global_error_handler))
         return ^*workspaces.peek_last().get()
@@ -712,13 +712,13 @@ impl Compiler {
 }
 
 impl Compiler {
-    start_compilation :: (&Self) {
+    start_compilation :: (&mut Self) {
         for 0..thread_count {
             threads.add(Thread.new(self.thread_func_ptr))
         }
     }
 
-    on_done :: (&Self, callback: Fn()) {
+    on_done :: (&mut Self, callback: Fn()) {
         Data :: struct {
             thread      : Thread
             callback    : Fn()
@@ -742,7 +742,7 @@ impl Compiler {
         )
     }
 
-    wait_for_threads :: (&Self) {
+    wait_for_threads :: (&mut Self) {
         if const @is_os("windows") {
             handles := mem.alloc_raw(ThreadHandle, cast threads.get_length())
 
@@ -760,7 +760,7 @@ impl Compiler {
         }
     }
 
-    wait_until_done :: (&Self) {
+    wait_until_done :: (&mut Self) {
         wait_for_threads()
         if waiting_fibers.count() > 0 {
             global_error_handler.report_error("[Compile] {} fibers were still waiting", [waiting_fibers.count()])
@@ -769,7 +769,7 @@ impl Compiler {
         g_logger.log("[Compiler] finished compilation with {} fibers", [fibers.get_length()])
     }
 
-    find_free_fiber :: (&Self) -> ^FiberContext {
+    find_free_fiber :: (&mut Self) -> ^mut FiberContext {
         for f in &fibers {
             if f.job == null and f.thread == -1 {
                 return *f
@@ -786,7 +786,7 @@ impl Compiler {
         }
     }
 
-    fiber_func :: (&Self, fiber_context: ^FiberContext) {
+    fiber_func :: (&mut Self, fiber_context: ^mut FiberContext) {
         while true {
             while fiber_context.job == null {
                 Fiber.yield()
@@ -799,11 +799,11 @@ impl Compiler {
         }
     }
 
-    thread_func :: (&Self) {
+    thread_func :: (&mut Self) {
         Fiber.init()
         thread_id := Thread.current().id
 
-        current_fiber : ^FiberContext = null
+        mut current_fiber : ^mut FiberContext = null
         while true #label main_loop {
             {
                 self.lock()
@@ -833,10 +833,10 @@ impl Compiler {
 
                 // no ready fibers
                 if self.ready_fibers.count() == 0 {
-                    has_jobs := false
+                    mut has_jobs := false
                     for workspace in &self.workspaces {
                         if workspace.get().jobs.count() > 0 {
-                            job := workspace.get().jobs.pop()
+                            job := workspace.get_mut().jobs.pop()
                             fiber := self.find_free_fiber()
                             fiber.job = job
 
