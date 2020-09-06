@@ -67,7 +67,7 @@ MainCommand :: enum {
     Compile : CommandCompile
 
     #name("build")
-    #help("Build a project using a build script (default: build.che)")
+    #help("Build a project using a build script (default: build.cheez)")
     Build : CommandBuild
 
     #name("project")
@@ -88,8 +88,8 @@ MainCommand :: enum {
 }
 
 CommandCompile :: struct {
-    #help("List of files to compile (.che extension optional)
-e.g. ... compile foo.che bar.che
+    #help("List of files to compile (.cheez extension optional)
+e.g. ... compile foo.cheez bar.cheez
 e.g. ... compile foo bar")
     files : Array[String]
 
@@ -127,7 +127,7 @@ CommandProject :: enum {
 }
 
 CommandRun :: struct {
-    #help("File to run. Can be a source file (.che) or bytecode file (.cheb)")
+    #help("File to run. Can be a source file (.cheez) or bytecode file (.cheezb)")
     file : String
 }
 
@@ -180,14 +180,14 @@ CommandFindToken :: struct {
 }
 
 find_tokens_of_type :: (options: ^CommandFindToken) {
-    console_error_handler := ConsoleErrorHandler.new(null)
+    mut console_error_handler := ConsoleErrorHandler.new(null)
     console_error_handler.code_color_error  = io.ConsoleColor.Green
     console_error_handler.code_color_normal = io.ConsoleColor.White
 
-    string_db := StringDatabase.new()
-    lexer := try_with(
+    mut string_db := StringDatabase.new()
+    mut lexer := try_with(
         Lexer.from_file(
-            options.file.slice(), &string_db),
+            options.file.slice(), &mut string_db),
             {
                 io.printfln("Failed to open file '{}'", options.file.slice())
                 return
@@ -200,7 +200,7 @@ find_tokens_of_type :: (options: ^CommandFindToken) {
     }
 
     loop {
-        token := lexer.get().next_token()
+        token := lexer.get_mut().next_token()
 
         if int(token.typ) == int(TokenType.EOF) then break
         if int(token.typ) != int(options.typ) then continue
@@ -256,7 +256,7 @@ Main :: () ``{
                 [options.name.slice()],
 "[CmdletBinding()]
 param ([Parameter(ValueFromRemainingArguments)] [string[]] $Passthrough)
-^cheezc ./src/main.che --out ./bin --name {} --time @Passthrough",
+&cheezc ./src/main.che --out ./bin --name {} --time @Passthrough",
                 [options.name.slice()])
 
     if !options.no_git {
@@ -298,17 +298,16 @@ command_build :: (options: ^CommandBuild) {
     DUMP_AST          = options.dump_ast
     PRINT_AST         = options.print_ast
     PRINT_TYPED_AST   = options.print_typed_ast
-    
-    
-    console_error_handler := ConsoleErrorHandler.new(null)
+
+    mut console_error_handler := ConsoleErrorHandler.new(null)
 
     if options.thread_count < 1 or options.thread_count > 32 {
         console_error_handler.report_error("Invalid thread_count: {}", [options.thread_count])
         return
     }
 
-    compiler := Compiler.new(options.thread_count, ^console_error_handler)
-    main_workspace := compiler.get().get_main_workspace()
+    mut compiler := Compiler.new(options.thread_count, ^console_error_handler)
+    mut main_workspace := compiler.get().get_main_workspace()
 
     wd := match fs.get_working_directory() {
         Ok($wd) -> wd
@@ -317,8 +316,8 @@ command_build :: (options: ^CommandBuild) {
             return
         }
     }
-    build_file := fmt.format("{}/build.che", [wd.slice()])
-    main_workspace.get().create_and_add_job(LoadFileJob.new(build_file))
+    build_file := fmt.format("{}/build.cheez", [wd.slice()])
+    main_workspace.get_mut().create_and_add_job(LoadFileJob.new(build_file))
 
     //
     compiler.get().user_defined_builtins.add((
@@ -332,6 +331,18 @@ command_build :: (options: ^CommandBuild) {
         ))
     ))
 
+    compiler.get().user_defined_builtins.add((
+        "_print_char",
+        Symbol.NativeFunc(NativeFunctionWrapper.new(
+            cast(NativeFunction) (interp) => {
+                frame := interp.top_frame()
+                io.set_console_foreground_color(.Green)
+                io.format("{}", [frame.get_arg(0, char)])
+                io.set_console_foreground_color(.White)
+            },
+            fn(char)
+        ))
+    ))
     compiler.get().user_defined_builtins.add((
         "_println",
         Symbol.NativeFunc(NativeFunctionWrapper.new(
@@ -366,8 +377,8 @@ command_build :: (options: ^CommandBuild) {
     ))
 
     start := get_time_milliseconds()
-    compiler.get().start_compilation()
-    compiler.get().wait_until_done()
+    compiler.get_mut().start_compilation()
+    compiler.get_mut().wait_until_done()
     end := get_time_milliseconds()
     dur := end - start
     g_logger.log("[Compiler] Compilation took {} ms", [dur])
@@ -379,7 +390,7 @@ dump_tokens :: (file: string) {
     match Lexer.from_file(file, &string_db) {
         Ok($lexer) -> {
             loop {
-                tok := lexer.get().next_token()
+                tok := lexer.get_mut().next_token()
                 io.formatln("{}", [tok])
                 if tok.typ == .EOF then break
             }

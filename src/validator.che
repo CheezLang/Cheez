@@ -121,6 +121,11 @@ validate_node :: (node: &AstNode, error_handler: ^ErrorHandler) -> bool {
             }
         }
 
+        AstChar($node) -> {
+            assert("AstChar", node.typ == @type_info(char))
+            assert("AstChar", node.value == .Char)
+        }
+
         AstConstDecl($node) -> {
             assert("AstConstDecl", node.typ == @type_info(void))
             assert("AstConstDecl", node.var_type != null)
@@ -163,6 +168,8 @@ validate_node :: (node: &AstNode, error_handler: ^ErrorHandler) -> bool {
 
         AstDot($node) -> {
             assert("AstDot", node.typ != null)
+            assert("AstDot", node.address_mode != .NotSet)
+            assert("AstDot", node.sub_type != null)
             if node.sub != null and !validate_node(&*node.sub, error_handler) {
                 return false
             }
@@ -195,6 +202,25 @@ validate_node :: (node: &AstNode, error_handler: ^ErrorHandler) -> bool {
             if node.false_case != null and !validate_node(&*node.false_case, error_handler) {
                 return false
             }
+        }
+
+        AstImpl($node) -> {
+            assert("AstImport", node.typ != null)
+
+            if !validate_node(node.target_expr, error_handler) {
+                return false
+            }
+
+            if node.trait_expr != null and !validate_node(&*node.trait_expr, error_handler) {
+                return false
+            }
+
+            // This shouldn't be necessary because the children are already validated by the CompileGlobalNodeJob
+            // for(by_ref=false) child in &node.children {
+            //     if !validate_node(&*child, error_handler) {
+            //         return false
+            //     }
+            // }
         }
 
         AstImport($node) -> {

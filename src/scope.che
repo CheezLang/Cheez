@@ -1,5 +1,6 @@
 use import std.map
 use import std.thread
+use import std.array
 
 fmt :: import std.fmt
 io  :: import std.io
@@ -14,9 +15,11 @@ use import compiler
 #export_scope
 
 Scope :: struct {
-    parent      : ^Scope
-    symbols     := Map[string, Symbol].new()
-    mutex       := Option[Mutex].None
+    parent          : ^mut Scope
+    symbols         := Map[string, Symbol].new()
+    impls           := Option[Array[^mut AstImpl]].None
+    type_impl_map   := Option[Map[TypeId, Array[^mut AstImpl]]].None
+    mutex           := Option[Mutex].None
 
     // if true, this scope is for code executed at compile time
     // and thus can only access constant values from parent scopes
@@ -49,7 +52,7 @@ impl Scope {
         }
     }
 
-    define_value :: (&Self, name: string, typ: ^TypeInfo, val: Value) -> Result[(), ()] {
+    define_value :: (&mut Self, name: string, typ: ^TypeInfo, val: Value) -> Result[(), ()] {
         self.lock()
         defer self.release()
 
@@ -62,7 +65,7 @@ impl Scope {
         return Ok()
     }
 
-    define_function :: (&Self, name: string, func: &AstFunction) -> Result[(), ()] {
+    define_function :: (&mut Self, name: string, func: &AstFunction) -> Result[(), ()] {
         self.lock()
         defer self.release()
 
@@ -75,7 +78,7 @@ impl Scope {
         return Ok()
     }
 
-    define_decl :: (&Self, name: string, decl: &AstDecl) -> Result[(), ()] {
+    define_decl :: (&mut Self, name: string, decl: &AstDecl) -> Result[(), ()] {
         self.lock()
         defer self.release()
 
@@ -88,7 +91,7 @@ impl Scope {
         return Ok()
     }
 
-    define_const_decl :: (&Self, name: string, decl: &AstConstDecl) -> Result[(), ()] {
+    define_const_decl :: (&mut Self, name: string, decl: &AstConstDecl) -> Result[(), ()] {
         self.lock()
         defer self.release()
 
@@ -101,7 +104,7 @@ impl Scope {
         return Ok()
     }
 
-    define_native_function :: (&Self, name: string, wrapper: ^NativeFunctionWrapper) -> Result[(), ()] {
+    define_native_function :: (&mut Self, name: string, wrapper: ^NativeFunctionWrapper) -> Result[(), ()] {
         self.lock()
         defer self.release()
 
@@ -114,7 +117,7 @@ impl Scope {
         return Ok()
     }
 
-    define_symbol :: (&Self, name: string, symbol: Symbol) -> Result[(), ()] {
+    define_symbol :: (&mut Self, name: string, symbol: Symbol) -> Result[(), ()] {
         self.lock()
         defer self.release()
 
@@ -125,6 +128,10 @@ impl Scope {
         symbols[name] = symbol
 
         return Ok()
+    }
+
+    get_symbol_local :: (&Self, name: string) -> Option[&mut Symbol] {
+        return symbols.get(name)
     }
 
     get_symbol :: (&Self, name: string, only_public: bool = false) -> Symbol {
@@ -172,11 +179,98 @@ impl Scope {
             }
         }
     }
+
+    get_impl_symbol :: (&mut Self, typ: ^TypeInfo, name: string) -> Option[Symbol] {
+        mut scope := ^*self
+        while scope != null #label outer_loop {
+            match &scope.impls {
+                Some($impls) -> {
+                    for(by_ref=false) imp in impls {
+                        wait_until(imp.target_expr.typ != null, {
+                            // workspace.error_handler.report_error_at(dot.location, "Should this error happen?")
+                            g_logger.log("[get_impl_symbol] Should this error happen?")
+                        })
+
+                        if !typ.matches_pattern(imp.target_expr.value.as_type()) then continue
+
+                        match imp.sub_scope.get_symbol_local(name) {
+                            Some($symbol) -> {
+                                return Some(*symbol)
+                            }
+
+                            None -> {}
+                        }
+                    }
+                }
+
+                None -> {}
+            }
+
+            scope = scope.parent
+        }
+
+        return None
+    }
+
+    register_impl :: (&mut Self, imp: ^mut AstImpl) {
+        if self.impls == .None {
+            self.impls = Some(Array[^mut AstImpl].new())
+        }
+
+        @assert(self.impls == .Some)
+        self.impls.Some.add(imp)
+    }
+
+    add_impl_for_type :: (&mut Self, imp: ^mut AstImpl) {
+        if self.type_impl_map == .None {
+            self.type_impl_map = Some(Map[TypeId, Array[^mut AstImpl]].new())
+        }
+
+        @assert(self.type_impl_map == .Some)
+
+        type_id := imp.target_expr.typ.id()
+        arr : &mut Array[^mut AstImpl] = self.type_impl_map.Some.get_or_insert(type_id, () => Array[^mut AstImpl].new(initial_capacity=1))
+        arr.add(imp)
+    }
+
+    get_impls :: (&Self, typ: ^TypeInfo) -> ScopeImplIterator {
+        return ScopeImplIterator(typ, self)
+    }
+}
+
+ScopeImplIterator :: struct {
+    typ: ^TypeInfo
+    scope: &Scope
+}
+
+for_extension_ScopeImplIterator :: (iter: ScopeImplIterator, code: Code) #for {
+    scope := ^*iter.scope
+    it_index := 0
+    while scope != null #label outer_loop {
+        match &scope.type_impl_map {
+            Some($map) -> {
+                @static_assert(@typeof(map) == &Map[TypeId, Array[^AstImpl]])
+                for kv, _ in map {
+                    if kv.key.type_info() == iter.typ {
+                        type_impl_map : &Array[^AstImpl] = kv.value
+                        for(by_ref=false) it in type_impl_map {
+                            @static_assert(@typeof(it) == ^AstImpl)
+                            @insert(code, _break=@link(break outer_loop), _continue=@link(continue))
+                            it_index += 1
+                        }
+                    }
+                }
+            }
+            None -> {}
+        }
+
+        scope = scope.parent
+    }
 }
 
 Symbol :: enum #copy {
-    Poison
     NotFound
+    Poison
     Private         : ^AstNode
     Decl            : ^AstDecl
     ConstDecl       : ^AstConstDecl
@@ -185,6 +279,7 @@ Symbol :: enum #copy {
     NativeFunc      : ^NativeFunctionWrapper
     NativeFunc2     : NativeFunctionWrapper2
     StructMember    : ^TypeInfoStructMember
+    OriginalNode    : &AstNode
 }
 
 #file_scope

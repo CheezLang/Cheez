@@ -2,11 +2,11 @@
 #export_scope
 
 DEBUG_ENABLED       :: true
-DEBUG_INTERPRETER   := false
-DEBUG_JOBS          := false
-DEBUG_PARSER        := false
-DEBUG_WAIT          := false
-DUMP_AST            := false
-PRINT_AST           := false
-PRINT_TYPED_AST     := false
+mut DEBUG_INTERPRETER   := false
+mut DEBUG_JOBS          := false
+mut DEBUG_PARSER        := false
+mut DEBUG_WAIT          := false
+mut DUMP_AST            := false
+mut PRINT_AST           := false
+mut PRINT_TYPED_AST     := false
 VALIDATE_AST        :: true

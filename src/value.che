@@ -13,6 +13,7 @@ Value :: enum #copy {
     Function    : ^AstFunction
     Poly        : ^AstPoly
     Bool        : bool
+    Char        : char
     Int         : int
     Float       : f64
     String      : string
@@ -20,6 +21,21 @@ Value :: enum #copy {
     NativeFunc2 : (wrapper: NativeFunctionWrapper2, func: fn())
     Type        : ^TypeInfo
     Module      : ^SourceFile
+}
+
+impl Value {
+    as_type :: (&Self) -> ^TypeInfo {
+        return match self {
+            .Type($ti) -> *ti
+            _ -> @assert(false)
+        }
+    }
+    as_module :: (&Self) -> ^SourceFile {
+        return match self {
+            .Module($sf) -> *sf
+            _ -> @assert(false)
+        }
+    }
 }
 
 NativeFunction :: Fn(^Interpreter)
@@ -38,11 +54,11 @@ impl NativeFunctionWrapper {
         ti := cast(^TypeInfoFunction) @type_info(T)
         raw := mem.alloc_raw(u8, cast @sizeof(NativeFunctionWrapper) + ti.param_types.length * @sizeof(int))
 
-        indices : []int = cast(^int) util.pointer_add(raw, @sizeof(NativeFunctionWrapper))
+        mut indices : []mut int = cast(^mut int) util.pointer_add(raw, @sizeof(NativeFunctionWrapper))
         indices.length = ti.param_types.length
-        wrapper := cast(^NativeFunctionWrapper) raw
+        wrapper := cast(^mut NativeFunctionWrapper) raw
 
-        slot_index := 0
+        mut slot_index := 0
         for(reverse=true) typ in ti.param_types {
             slot_index -= (typ.size + 7) / 8
             *indices[it_index_rev] = slot_index
@@ -58,7 +74,7 @@ impl NativeFunctionWrapper {
     }
 
     slots_for_type :: (ti: ^TypeInfoFunction) -> int {
-        slots := 0
+        mut slots := 0
         for(reverse=true) typ in ti.param_types {
             slots += (typ.size + 7) / 8
         }

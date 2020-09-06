@@ -18,23 +18,29 @@ AstNodeFlags :: enum #flags {
     OnlyPubDeclarations
 }
 
+AddressMode :: enum #copy {
+    NotSet
+    Address
+    Value
+}
+
 __uiaeuiaeuiae := @type_info(AstNodeFlags)
 
 AstNode :: trait {
     id       : int = -1
     location : Location
-    scope    : ^Scope = null
+    scope    : ^mut Scope = null
     typ      : ^TypeInfo = null
     value    : Value = Value.None
     flags    : int = 0
 }
 
 impl AstNode {
-    set_flags :: (&Self, flags: AstNodeFlags) {
+    set_flags :: (&mut Self, flags: AstNodeFlags) {
         self.flags = @bin_or(self.flags, int(flags))
     }
 
-    clear_flags :: (&Self, flags: AstNodeFlags) {
+    clear_flags :: (&mut Self, flags: AstNodeFlags) {
         self.flags = @bin_and(self.flags, @bin_not(int(flags)))
     }
 
@@ -45,20 +51,22 @@ impl AstNode {
 
 // statements
 AstConstDecl :: struct AstNode {
-    pattern     : &AstNode
-    type_expr   : ^AstNode
-    value_expr  : &AstNode
+    pattern     : &mut AstNode
+    type_expr   : ^mut AstNode
+    value_expr  : &mut AstNode
 
+    name        := "_"
     public      : bool = false
+    original_symbol := Option[Symbol].None
 
     var_type    : ^TypeInfo = null
 }
 impl AstNode for AstConstDecl {}
 
 AstDecl :: struct AstNode {
-    pattern     : ^AstNode
-    type_expr   : ^AstNode
-    value_expr  : ^AstNode
+    pattern     : ^mut AstNode
+    type_expr   : ^mut AstNode
+    value_expr  : ^mut AstNode
 
     mutable     : bool = false
     public      : bool = false
@@ -69,19 +77,24 @@ AstDecl :: struct AstNode {
 impl AstNode for AstDecl {}
 
 AstImport :: struct AstNode {
-    path : &AstNode
+    path : &mut AstNode
 }
 impl AstNode for AstImport {}
 
 AstUse :: struct AstNode {
-    value_expr : &AstNode
+    value_expr : &mut AstNode
 }
 impl AstNode for AstUse {}
 
 AstImpl :: struct AstNode {
-    target_expr : &AstNode
-    trait_expr  : ^AstNode
-    children    : Array[^AstNode]
+    target_expr : &mut AstNode
+    trait_expr  : ^mut AstNode
+    children    : Array[^mut AstNode]
+
+    functions   := Array[^mut AstFunction].new(0)
+    sub_scope   : ^mut Scope = null
+    
+    children_done := false // is true when all jobs for the children of this impl block are done
 }
 impl AstNode for AstImpl {}
 
@@ -89,13 +102,13 @@ impl AstNode for AstImpl {}
 
 AstStruct :: struct AstNode {
     name        := "#anonymous"
-    trait_expr  : ^AstNode
-    children    : Array[^AstNode]
+    trait_expr  : ^mut AstNode
+    children    : Array[^mut AstNode]
 
-    sub_scope   : ^Scope = null
-    struct_type : ^TypeInfo = null
-    members     := Array[^AstDecl].create()
-    constants   := Array[^AstConstDecl].create()
+    sub_scope   : ^mut Scope = null
+    struct_type : ^mut TypeInfo = null
+    members     := Array[^mut AstDecl].create()
+    constants   := Array[^mut AstConstDecl].create()
 
     // flags
     members_done := false
@@ -104,12 +117,12 @@ impl AstNode for AstStruct {}
 
 AstTrait :: struct AstNode {
     name        := "#anonymous"
-    children    : Array[^AstNode]
+    children    : Array[^mut AstNode]
 
-    sub_scope   : ^Scope = null
+    sub_scope   : ^mut Scope = null
     trait_type  : ^TypeInfo = null
-    members     := Array[^AstDecl].create()
-    functions   := Array[^AstConstDecl].create()
+    members     := Array[^mut AstDecl].create()
+    functions   := Array[^mut AstConstDecl].create()
 
     // flags
     members_done := false
@@ -118,11 +131,11 @@ impl AstNode for AstTrait {}
 
 AstEnum :: struct AstNode {
     name        := "#anonymous"
-    children    : Array[^AstNode]
+    children    : Array[^mut AstNode]
 
-    sub_scope   : ^Scope = null
+    sub_scope   : ^mut Scope = null
     enum_type   : ^TypeInfo = null
-    members     := Array[^AstDecl].create()
+    members     := Array[^mut AstDecl].create()
 
     // flags
     members_done := false
@@ -130,48 +143,54 @@ AstEnum :: struct AstNode {
 impl AstNode for AstEnum {}
 
 AstFunction :: struct AstNode {
-    params              : Array[^AstDecl]
-    body                : ^AstNode
-    return_type_expr    : ^AstNode
+    params              : Array[^mut AstDecl]
+    body                : ^mut AstNode
+    return_type_expr    : ^mut AstNode
 
-    param_scope         : ^Scope
+    param_scope         : ^mut Scope
     name                := "#anonymous"
     return_type         : ^TypeInfo = null
 
-    bytecode            : ^CBCFunction = null
+    bytecode            : ^mut CBCFunction = null
 }
 impl AstNode for AstFunction {}
 
 AstPoly :: struct AstNode {
-    params      : Array[^AstDecl]
-    value_expr  : &AstNode
+    params      : Array[^mut AstDecl]
+    value_expr  : &mut AstNode
 
-    param_scope : ^Scope
+    param_scope : ^mut Scope
     name        := "#anonymous"
 }
 impl AstNode for AstPoly {}
 
 AstArgument :: struct AstNode {
-    name        : ^AstIdentifier
-    value_expr  : &AstNode
+    name        : ^mut AstIdentifier
+    value_expr  : &mut AstNode
+
+    param       : enum #copy {
+        None
+        Parameter       : &AstDecl
+        StructMember    : &TypeInfoStructMember
+    }
 }
 impl AstNode for AstArgument {}
 
 AstBlock :: struct AstNode {
-    sub_scope   : ^Scope
-    children    : Array[^AstNode]
+    sub_scope   : ^mut Scope
+    children    : Array[^mut AstNode]
 }
 impl AstNode for AstBlock {}
 
 AstCast :: struct AstNode {
-    type_expr   : ^AstNode
-    value_expr  : &AstNode
+    type_expr   : ^mut AstNode
+    value_expr  : &mut AstNode
 }
 impl AstNode for AstCast {}
 
 AstCall :: struct AstNode {
-    function        : &AstNode
-    arguments       : Array[^AstArgument]
+    function        : &mut AstNode
+    arguments       : Array[^mut AstArgument]
     ast_function    : ^AstFunction = null
 }
 impl AstNode for AstCall {}
@@ -179,6 +198,7 @@ impl AstNode for AstCall {}
 AstIdentifier :: struct AstNode {
     name    : string
     symbol  := Symbol.NotFound
+    original_symbol := Option[Symbol].None
 }
 impl AstNode for AstIdentifier {}
 
@@ -190,6 +210,11 @@ AstString :: struct AstNode {
     string_value : string
 }
 impl AstNode for AstString {}
+
+AstChar :: struct AstNode {
+    char_value : char
+}
+impl AstNode for AstChar {}
 
 AstBool :: struct AstNode {
     bool_value : bool
@@ -203,8 +228,8 @@ impl AstNode for AstNull {}
 
 AstBinary :: struct AstNode {
     operator    : BinOp
-    left        : &AstNode
-    right       : &AstNode
+    left        : &mut AstNode
+    right       : &mut AstNode
 
     BinOp :: enum #copy { Add, Sub, Mul, Div, Mod, And, Or, Less, LessEq, Greater, GreaterEq, Equal, NotEqual, Move, Pipe, Range, RangeIncl }
 }
@@ -212,105 +237,116 @@ impl AstNode for AstBinary {}
 
 AstUnary :: struct AstNode {
     operator    : UnOp
-    sub         : &AstNode
+    sub         : &mut AstNode
 
     UnOp :: enum #copy { Neg, Not, Ref, RefMut, Ptr, PtrMut, Deref }
 }
 impl AstNode for AstUnary {}
 
 AstAssignment :: struct AstNode {
-    pattern     : &AstNode
-    value_expr  : &AstNode
+    pattern     : &mut AstNode
+    value_expr  : &mut AstNode
 }
 impl AstNode for AstAssignment {}
 
 AstIf :: struct AstNode {
-    condition   : &AstNode
-    true_case   : &AstNode
-    false_case  : ^AstNode
+    condition   : &mut AstNode
+    true_case   : &mut AstNode
+    false_case  : ^mut AstNode
 }
 impl AstNode for AstIf {}
 
 AstFor :: struct AstNode {
-    it_pattern  : ^AstNode
-    index_name  : ^AstIdentifier
-    collection  : &AstNode
-    body        : &AstNode
+    it_pattern  : ^mut AstNode
+    index_name  : ^mut AstIdentifier
+    collection  : &mut AstNode
+    body        : &mut AstNode
 }
 impl AstNode for AstFor {}
 
 AstLoop :: struct AstNode {
-    body : &AstNode
+    body : &mut AstNode
 }
 impl AstNode for AstLoop {}
 
 AstMatch :: struct AstNode {
-    value_expr  : ^AstNode
-    cases       : Array[^AstMatchCase]
+    value_expr  : ^mut AstNode
+    cases       : Array[^mut AstMatchCase]
 }
 impl AstNode for AstMatch {}
 
 AstMatchCase :: struct {
-    pattern     : &AstNode
-    condition   : ^AstNode
-    body        : &AstNode
+    pattern     : &mut AstNode
+    condition   : ^mut AstNode
+    body        : &mut AstNode
 }
 
 AstBreak :: struct AstNode {
-    label       : ^AstIdentifier
-    value_expr  : ^AstNode
+    label       : ^mut AstIdentifier
+    value_expr  : ^mut AstNode
 }
 impl AstNode for AstBreak {}
 
 AstContinue :: struct AstNode {
-    label : ^AstIdentifier
+    label : ^mut AstIdentifier
 }
 impl AstNode for AstContinue {}
 
 AstReturn :: struct AstNode {
-    value_expr : ^AstNode
+    value_expr : ^mut AstNode
 }
 impl AstNode for AstReturn {}
 
 AstDefer :: struct AstNode {
-    sub : &AstNode
+    sub : &mut AstNode
 }
 impl AstNode for AstDefer {}
 
 AstTuple :: struct AstNode {
-    values : Array[^AstNode]
+    values : Array[^mut AstNode]
 }
 impl AstNode for AstTuple {}
 
 AstArray :: struct AstNode {
-    values : Array[^AstNode]
+    values : Array[^mut AstNode]
 }
 impl AstNode for AstArray {}
 
 AstArrayType :: struct AstNode {
-    count   : ^AstNode
-    target  : &AstNode
+    count   : ^mut AstNode
+    target  : &mut AstNode
 }
 impl AstNode for AstArrayType {}
 
 AstDot :: struct AstNode {
-    sub     : ^AstNode
-    name    : &AstIdentifier
+    sub     : ^mut AstNode
+    name    : &mut AstIdentifier
 
     symbol  := Symbol.NotFound
+    original_symbol := Option[Symbol].None
+    sub_type        : ^TypeInfo = null
+    address_mode    := AddressMode.NotSet
 }
 impl AstNode for AstDot {}
 
 AstIndex :: struct AstNode {
-    sub         : &AstNode
-    arguments   : Array[^AstArgument]
-    index       : ^AstNode
+    sub         : &mut AstNode
+    arguments   : Array[^mut AstArgument]
+    index       : ^mut AstNode
 }
 impl AstNode for AstIndex {}
 
 AstUfc :: struct AstNode {
-    value_expr  : &AstNode
+    value_expr  : &mut AstNode
     symbol      : Symbol
+}
+
+// nodes generated by compiler
+AstDeclRef :: struct AstNode {
+    decl : enum {
+        Decl        : &mut AstDecl
+        ConstDecl   : &mut AstConstDecl
+    }
 }
 
 // impl AstFunction {
@@ -326,6 +362,56 @@ AstUfc :: struct AstNode {
 //         return None
 //     }
 // }
+
+impl AstNode {
+    set_name :: (&Self, name: string) {
+        match self {
+            AstDecl($decl) -> {
+                decl.name = name
+            }
+            AstConstDecl($decl) -> {
+                decl.name = name
+            }
+            AstFunction($func) -> {
+                func.name = name
+            }
+            AstStruct($str) -> {
+                str.name = name
+            }
+            AstEnum($en) -> {
+                en.name = name
+            }
+            AstTrait($tr) -> {
+                tr.name = name
+            }
+            AstPoly($poly) -> {
+                poly.name = name
+            }
+        }
+    }
+
+    get_symbol :: (&Self) -> Option[Symbol] {
+        return match self {
+            AstIdentifier($id) -> Some(id.symbol)
+            AstDot($dot) -> Some(dot.symbol)
+            AstUfc($ufc) -> Some(ufc.symbol)
+            _ -> None
+        }
+    }
+
+    get_original_symbol :: (&Self) -> Option[Symbol] {
+        return match self {
+            AstStruct(_)        -> Some(Symbol.OriginalNode(self))
+            AstEnum(_)          -> Some(Symbol.OriginalNode(self))
+            AstTrait(_)         -> Some(Symbol.OriginalNode(self))
+            AstConstDecl($decl) -> decl.original_symbol
+            AstIdentifier($id)  -> id.original_symbol
+            AstDot($dot)        -> dot.original_symbol
+            // AstUfc($ufc)     -> Some(ufc.original_symbol)
+            _                   -> None
+        }
+    }
+}
 
 impl AstBinary.BinOp {
     lexeme :: (Self) -> string {

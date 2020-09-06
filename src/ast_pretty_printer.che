@@ -24,7 +24,7 @@ pretty_print_typed_ast :: (node: &AstNode) -> String {
 
 #file_scope
 
-append_indented :: (result: &String, str: &String, indent: int) {
+append_indented :: (result: &mut String, str: &String, indent: int) {
     for line in str.slice().split_at_char('`n') {
         for 0..indent {
             result += " "
@@ -34,7 +34,7 @@ append_indented :: (result: &String, str: &String, indent: int) {
     }
 }
 
-pretty_print_ast_helper :: (result: &String, node: &AstNode) {
+pretty_print_ast_helper :: (result: &mut String, node: &AstNode) {
     match node {
         AstStruct($node) -> {
             fmt.format_into(result, "struct {} ``{`n", [node.name])
@@ -419,7 +419,7 @@ pretty_print_ast_helper :: (result: &String, node: &AstNode) {
     }
 }
 
-pretty_print_typed_ast_helper :: (result: &String, node: &AstNode) {
+pretty_print_typed_ast_helper :: (result: &mut String, node: &AstNode) {
     match node {
         AstStruct($str) -> {
             fmt.format_into(result, "struct {} ``{ // size: {}, alignment: {}`n", [str.name, str.struct_type.size, str.struct_type.alignment])

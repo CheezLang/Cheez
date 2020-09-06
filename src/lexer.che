@@ -115,13 +115,13 @@ impl Lexer {
         ))
     }
 
-    from_file :: (filename: string, string_db: &StringDatabase) -> Result[Rc[Lexer], ()] {
+    from_file :: (filename: string, string_db: &mut StringDatabase) -> Result[Rc[Lexer], ()] {
         content := {
             content := try_with(read_file(filename), {return Err(())})
             string_db.intern(content.slice())
         }
         l := Lexer.from_string(content.slice(), string_db)
-        l.get().location.file = filename
+        l.get_mut().location.file = filename
         return Ok(l)
     }
 
@@ -132,7 +132,7 @@ impl Lexer {
         }
     }
 
-    expect_token :: (&Self, typ: TokenType) -> bool, Token {
+    expect_token :: (&mut Self, typ: TokenType) -> bool, Token {
         token := next_token()
         if int(token.typ) == int(typ) {
             return true, token
@@ -141,7 +141,7 @@ impl Lexer {
         }
     }
 
-    peek_token :: (&Self) -> &Token {
+    peek_token :: (&mut Self) -> &Token {
         return match &peek {
             Some($tok) -> tok
 
@@ -153,7 +153,7 @@ impl Lexer {
         }
     }
 
-    next_token :: (&Self) -> Token {
+    next_token :: (&mut Self) -> Token {
         match peek {
             Some($t) -> {
                 peek = None
@@ -177,7 +177,7 @@ impl Lexer {
         return t
     }
 
-    skip_whitespace :: (&Self) {
+    skip_whitespace :: (&mut Self) {
         while true {
             tok := self.peek_token()
 
@@ -193,7 +193,7 @@ impl Lexer {
         }
     }
 
-    skip_line :: (&Self) {
+    skip_line :: (&mut Self) {
         while true {
             tok := self.next_token()
 
@@ -208,8 +208,8 @@ impl Lexer {
         }
     }
 
-    read_token :: (&Self) -> Token {
-        token := Token(
+    read_token :: (&mut Self) -> Token {
+        mut token := Token(
             typ      = TokenType.EOF
             data     = TokenData.None
             location = location
@@ -323,16 +323,16 @@ impl Lexer {
         return token
     }
 
-    parse_number_literal :: (&Self, token: &Token) {
+    parse_number_literal :: (&mut Self, token: &mut Token) {
         token.typ = TokenType.NumberLiteral
-        base := 10
-        str := {
+        mut base := 10
+        mut str := {
             raw := @alloca(u8, 128)
             str := String.from_raw_ptr(raw.data, raw.length)
             str
         }
 
-        is_float := false
+        mut is_float := false
 
         LexerNumberState :: enum #copy {
             Error
@@ -354,7 +354,7 @@ impl Lexer {
 
         use LexerNumberState
 
-        state := Init
+        mut state := Init
         while location.byte_index - offset < text.bytes.length {
             c, c_len := peek_char(0)
             next, _  := peek_char(1)
@@ -547,12 +547,12 @@ impl Lexer {
             d := C.strtod(cast str.get_raw(), null)
             token.data = TokenData.Double(d)
         } else {
-            i := C.strtol(cast str.get_raw(), null, cast base)
+            i := C.strtoll(cast str.get_raw(), null, cast base)
             token.data = TokenData.Integer(i)
         }
     }
 
-    parse_suffix :: (&Self, token: &Token) {
+    parse_suffix :: (&mut Self, token: &mut Token) {
         if is_ident_begin(peek_char(0)[0]) {
             start := location.byte_index - offset
             while location.byte_index - offset < text.bytes.length {
@@ -566,13 +566,13 @@ impl Lexer {
         }
     }
 
-    simple_token :: (&Self, token: &Token, typ: TokenType, len: int, chars: int) {
+    simple_token :: (&mut Self, token: &mut Token, typ: TokenType, len: int, chars: int) {
         token.typ = typ
         location.byte_index += len
         location.column += chars
     }
 
-    parse_identifier :: (&Self, token: &Token, typ: TokenType) {
+    parse_identifier :: (&mut Self, token: &mut Token, typ: TokenType) {
         token.typ = typ
         start := location.byte_index - offset
 
@@ -587,13 +587,13 @@ impl Lexer {
         token.data = TokenData.String(string_db.intern(str))
     }
 
-    parse_string_literal :: (&Self, token: &Token, typ: TokenType, end: char) {
+    parse_string_literal :: (&mut Self, token: &mut Token, typ: TokenType, end: char) {
         token.typ = typ
         location.byte_index += 1
         location.column += 1
         start := location.byte_index - offset
 
-        foundEnd := false
+        mut foundEnd := false
         while location.byte_index - offset < text.bytes.length {
             c, c_len := peek_char(0)
             location.byte_index += int(c_len)
@@ -626,7 +626,7 @@ impl Lexer {
         token.data = TokenData.String(string_db.intern(str))
     }
 
-    skip_newlines_and_comments :: (&Self) -> loc: Option[Location] {
+    skip_newlines_and_comments :: (&mut Self) -> loc: Option[Location] {
         loc = None
 
         while location.byte_index - offset < text.bytes.length {
@@ -659,8 +659,8 @@ impl Lexer {
         }
     }
 
-    peek_char :: (&Self, offset: int) -> char, i32 {
-        index := location.byte_index - self.offset
+    peek_char :: (&Self, mut offset: int) -> char, i32 {
+        mut index := location.byte_index - self.offset
         while offset > 0, offset -= 1 {
             _, len := Utf8.decode(text.slice().bytes[index..text.bytes.length])
             index += int(len)
@@ -672,8 +672,8 @@ impl Lexer {
         return Utf8.decode(text.bytes[index..text.bytes.length])
     }
 
-    parse_multi_line_comment :: (&Self) {
-        level := 0
+    parse_multi_line_comment :: (&mut Self) {
+        mut level := 0
         while location.byte_index - offset < text.bytes.length {
             curr, curr_len := peek_char(0)
             next, next_len := peek_char(1)
@@ -700,7 +700,7 @@ impl Lexer {
         }
     }
 
-    parse_single_line_comment :: (&Self) {
+    parse_single_line_comment :: (&mut Self) {
         while location.byte_index - offset < text.bytes.length {
             next, len := peek_char(0)
             if next == '`n' {
@@ -712,7 +712,7 @@ impl Lexer {
         }
     }
 
-    check_keywords :: (&Self, token: &Token) {
+    check_keywords :: (&Self, token: &mut Token) {
         match token.data {
             TokenData.String($str) -> {
                 token.typ =
@@ -807,13 +807,13 @@ TokenData :: enum #copy {
 }
 
 impl Printable for Location {
-    print :: (&Self, str: &String, format: string) {
+    print :: (&Self, str: &mut String, format: string) {
         str.appendf("{}:{}:{}", (file, line, column, end_line))
     }
 }
 
 impl Printable for Token {
-    print :: (&Self, str: &String, format: string) {
+    print :: (&Self, str: &mut String, format: string) {
         str.appendf("{} ({})", (typ, location))
         match data {
             TokenData.String($s) -> str.appendf(" String({})", s)
@@ -828,7 +828,7 @@ impl Printable for Token {
 }
 
 impl Printable for TokenType {
-    print :: (&Self, str: &String, format: string) {
+    print :: (&Self, str: &mut String, format: string) {
         use TokenType
 
         str += cast(string)match self {

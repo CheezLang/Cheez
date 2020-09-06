@@ -478,7 +478,7 @@ impl CommandHandler for CheezDebugAdapter {
     launch :: (&Self, arguments: DapReqLaunch) -> Result[(), String] {
         debugger.get().set_callbacks(^*self)
 
-        if arguments.program.slice().ends_with(".che") {
+        if arguments.program.slice().ends_with(CHEEZ_FILE_EXTENSION) {
             self.compile_cheez_program(arguments.program.slice())
         } else {
             return Err(fmt.format("Can't debug the file '{}'", [arguments.program]))

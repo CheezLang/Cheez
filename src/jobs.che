@@ -34,11 +34,11 @@ CompilationJob :: trait {
     cancelled   : bool = false
     progressed  : bool = false
     done        : bool = false
-    compiler    : ^Compiler = null
-    workspace   : ^Workspace = null
+    compiler    : ^mut Compiler = null
+    workspace   : ^mut Workspace = null
 
     get_name :: (&Self) -> string;
-    execute :: (&Self);
+    execute :: (&mut Self);
 }
 
 LoadFileJob :: struct CompilationJob {
@@ -49,7 +49,7 @@ LoadFileJob :: struct CompilationJob {
 impl LoadFileJob {
     new :: (path: String) -> LoadFileJob {
         return LoadFileJob(
-            name = fmt.format("LoadFileJob '{}'", [path])
+            name = fmt.format("LoadFileJob '{}'", [path.slice()])
             path = path
         )
     }
@@ -112,7 +112,7 @@ impl CompilationJob for CompileStructMemberJob {
         }}
     }
 
-    execute :: (&Self) {
+    execute :: (&mut Self) {
         debug_log("Begin compilation")
 
         compile_node := CompileNode(
@@ -146,7 +146,7 @@ impl CompilationJob for CompileStructMemberJob {
                         @assert(node.value == .String)
                         str := node.value.String
                         lexer := workspace.add_string_source(str)
-                        parser := Parser.new(lexer.get(), workspace.error_handler, workspace.ast_allocator, workspace.next_ast_id)
+                        parser := Parser.new(lexer.get_mut(), workspace.error_handler, workspace.ast_allocator, workspace.next_ast_id)
                         workspace.next_ast_id += 0xFFFFFFFF // ?
 
                         loop {
@@ -155,11 +155,11 @@ impl CompilationJob for CompileStructMemberJob {
 
                             if const DEBUG_ENABLED { if DUMP_AST {
                                 dump := dump_ast(&*node)
-                                g_logger.log("[{}] {}", [self.name, dump])
+                                g_logger.log("[{}] {}", [self.name.slice(), dump])
                             }}
                             if const DEBUG_ENABLED { if PRINT_AST {
                                 dump := pretty_print_ast(&*node)
-                                g_logger.log("[{}] {}", [self.name, dump])
+                                g_logger.log("[{}] {}", [self.name.slice(), dump])
                             }}
 
                             node.scope = self.node.scope
@@ -189,7 +189,7 @@ impl CompilationJob for CompileGlobalNodeJob {
         }}
     }
 
-    execute :: (&Self) {
+    execute :: (&mut Self) {
         debug_log("Begin compilation")
 
         compile_node := CompileNode(
@@ -218,7 +218,7 @@ impl CompilationJob for CompileGlobalNodeJob {
 
         if const DEBUG_ENABLED { if PRINT_TYPED_AST {
             dump := pretty_print_typed_ast(&*node)
-            g_logger.log("[{}] {}", [self.name, dump])
+            g_logger.log("[{}] {}", [self.name.slice(), dump])
         }}
 
         debug_log("Done")
@@ -237,7 +237,7 @@ impl CompilationJob for RunCodeJob {
         }}
     }
 
-    execute :: (&Self) {
+    execute :: (&mut Self) {
         if workspace.error_handler.has_errors() {
             return
         }
@@ -263,11 +263,11 @@ impl CompilationJob for LoadFileJob {
     debug_log :: (&Self, msg: string, args: []^any = []) {
         if const DEBUG_ENABLED { if DEBUG_JOBS {
             str := fmt.format(msg, args)
-            g_logger.log("[Workspace {}] [LoadFileJob '{}'] {}", [workspace.id, path, str])
+            g_logger.log("[Workspace {}] [LoadFileJob '{}'] {}", [workspace.id, path.slice(), str])
         }}
     }
 
-    execute :: (&Self) {
+    execute :: (&mut Self) {
         debug_log("Begin loading")
 
         full_path := match fs.get_full_path(path.slice()) {
@@ -284,8 +284,8 @@ impl CompilationJob for LoadFileJob {
             Ok($file) -> match file { Some($file) -> {
                 // todo: workspace.string_database must be protected in multi threading
                 lexer := Lexer.from_string(file.content, &workspace.string_database)
-                lexer.get().location.file = full_path
-                parser := Parser.new(lexer.get(), workspace.error_handler, workspace.ast_allocator, workspace.next_ast_id)
+                lexer.get_mut().location.file = full_path
+                parser := Parser.new(lexer.get_mut(), workspace.error_handler, workspace.ast_allocator, workspace.next_ast_id)
                 workspace.next_ast_id += 0xFFFFFFFF // ?
 
                 loop {
@@ -294,11 +294,11 @@ impl CompilationJob for LoadFileJob {
 
                     if const DEBUG_ENABLED { if DUMP_AST {
                         dump := dump_ast(&*node)
-                        g_logger.log("[{}] {}", [self.name, dump])
+                        g_logger.log("[{}] {}", [self.name.slice(), dump])
                     }}
                     if const DEBUG_ENABLED { if PRINT_AST {
                         dump := pretty_print_ast(&*node)
-                        g_logger.log("[{}] {}", [self.name, dump])
+                        g_logger.log("[{}] {}", [self.name.slice(), dump])
                     }}
 
                     node.scope = file.global_scope
@@ -306,82 +306,25 @@ impl CompilationJob for LoadFileJob {
 
                     match node {
                         AstConstDecl($decl) -> {
-                            define_const_decl(&*decl)
-                            AstNode.set_flags(&*decl, .IsDefinedInScope)
+                            define_const_decl(&*decl, &*self.workspace)
                         }
                         AstDecl($decl) -> {
-                            define_decl(&*decl)
-                            AstNode.set_flags(&*decl, .IsDefinedInScope)
+                            define_decl(&*decl, &*self.workspace)
                         }
                     }
                 }
 
-                for node in &file.nodes {
-                    workspace.add_job(workspace.create_job(CompileGlobalNodeJob.new(*node)))
+                for(by_ref=false) node in &file.nodes {
+                    match node {
+                        AstImpl($imp) -> node.scope.register_impl(imp)
+                        _ -> {}
+                    }
+                    workspace.add_job(workspace.create_job(CompileGlobalNodeJob.new(node)))
                 }
             }}
         }
 
         debug_log("Done")
-    }
-
-    define_decl :: (&Self, decl: &AstDecl) {
-        decl.name = match &*decl.pattern {
-            AstIdentifier($id) -> id.name
-            _ -> {
-                workspace.error_handler.report_error_at(decl.location, "Non-identifier patterns not implemented yet")
-                return
-            }
-        }
-
-        // define symbol but only if not _
-        if decl.name != "_" {
-            match decl.scope.define_decl(decl.name, decl) {
-                Err() -> {
-                    workspace.error_handler.report_error_at(decl.pattern.location, "A symbol with this name already exists in this scope")
-                }
-            }
-        }
-    }
-
-    define_const_decl :: (&Self, decl: &AstConstDecl) {
-        decl.value_expr.scope = decl.scope
-
-        name := match decl.pattern {
-            AstIdentifier($id) -> id.name
-            _ -> {
-                workspace.error_handler.report_error_at(decl.location, "Non-identifier patterns not implemented yet")
-                return
-            }
-        }
-
-        // set name of value expr if its a function or struct/trait/enum
-        match decl.value_expr {
-            AstFunction($func) -> {
-                func.name = name
-            }
-            AstStruct($str) -> {
-                str.name = name
-            }
-            AstEnum($en) -> {
-                en.name = name
-            }
-            AstTrait($tr) -> {
-                tr.name = name
-            }
-            AstPoly($poly) -> {
-                poly.name = name
-            }
-        }
-
-        // define symbol but only if not _
-        if name != "_" {
-            match decl.scope.define_const_decl(name, decl) {
-                Err() -> {
-                    workspace.error_handler.report_error_at(decl.pattern.location, "A symbol with this name already exists in this scope")
-                }
-            }
-        }
     }
 }
 
@@ -398,8 +341,8 @@ CNContext :: struct #copy {
 }
 
 impl CNContext {
-    with_expected :: (Self, typ: ^TypeInfo) -> CNContext {
-        expected = typ
+    with_expected :: (mut self: Self, typ: ^TypeInfo) -> CNContext {
+        self.expected = typ
         return self
     }
 }
@@ -412,7 +355,7 @@ impl CompileNode {
         }}
     }
 
-    evaluate_node :: (&Self, node: &AstNode, ctx: CNContext) -> &AstNode {
+    evaluate_node :: (&mut Self, node: &mut AstNode, ctx: CNContext) -> &mut AstNode {
         // {
         //     dump := dump_ast(node, recurse = false)
         //     debug_log("evaluate_node: {}", [dump])
@@ -426,7 +369,7 @@ impl CompileNode {
 
         if node.value == .None {
             code_gen := ByteCodeGenerator.new(&workspace.string_database, &*workspace.error_handler, workspace.bc_allocator)
-            code := code_gen.get().generate_code_for_expression(node)
+            code := code_gen.get_mut().generate_code_for_expression(node)
             context := Fiber.user_data(FiberContext)
             context.interp.push_frame(code)
             defer context.interp.pop_frame()
@@ -455,7 +398,7 @@ impl CompileNode {
         return node
     }
 
-    compile_node :: (&Self, node: &AstNode, ctx: CNContext) -> &AstNode {
+    compile_node :: (&mut Self, node: &mut AstNode, ctx: CNContext) -> &mut AstNode {
         // g_logger.log("compile_node"
         if node.typ != null {
             return node
@@ -468,7 +411,6 @@ impl CompileNode {
 
         return match node {
         // result : &AstNode = match node {
-            AstArgument($arg)       -> compile_argument(arg, ctx)
             AstArray($arr)          -> compile_array(arr, ctx)
             AstArrayType($arr)      -> compile_array_type(arr, ctx)
             AstAssignment($ass)     -> compile_assignment(ass, ctx)
@@ -478,6 +420,7 @@ impl CompileNode {
             AstBreak($brake)        -> compile_break(brake, ctx)
             AstCall($call)          -> compile_call(call, ctx)
             AstCast($cst)           -> compile_cast(cst, ctx)
+            AstChar($cha)           -> compile_char(cha, ctx)
             AstConstDecl($decl)     -> compile_const_decl(decl, ctx)
             AstContinue($cont)      -> compile_continue(cont, ctx)
             AstDecl($decl)          -> compile_decl(decl, ctx)
@@ -487,6 +430,7 @@ impl CompileNode {
             AstFunction($func)      -> compile_function(func, ctx)
             AstIdentifier($id)      -> compile_identifier(id, ctx)
             AstIf($iff)             -> compile_if(iff, ctx)
+            AstImpl($imp)           -> compile_impl(imp, ctx)
             AstImport($imp)         -> compile_import(imp, ctx)
             AstIndex($index)        -> compile_index(index, ctx)
             AstLoop($lop)           -> compile_loop(lop, ctx)
@@ -513,34 +457,81 @@ impl CompileNode {
         // return result
     }
 
-    compile_dot :: (&Self, dot: &AstDot, ctx: CNContext) -> &AstNode {
+    get_type_and_value_of_symbol :: (symbol: &Symbol) -> (typ: ^TypeInfo, value: Value) {
+        return match symbol {
+            .Val($value) -> value.typ, value.value
+
+            .ConstDecl($decl) -> {
+                wait_until(decl.value_expr.value != .None and decl.value_expr.typ != null, {
+                    @assert(false, "Should not happen?")
+                })
+                // @todo: get type of type expr if available
+                decl.value_expr.typ, decl.value_expr.value
+            }
+
+            .Decl($decl) -> {
+                wait_until(decl.var_type != null, {
+                    @assert(false, "Should not happen?")
+                })
+                decl.var_type, Value.None
+            }
+
+            .NativeFunc($func) -> cast func.function_type, Value.NativeFunc(*func)
+
+            $sym -> {
+                @assert(false, "Should not happen?")
+                null, Value.None
+            }
+        }
+    }
+
+    compile_dot :: (&mut Self, dot: &mut AstDot, ctx: CNContext) -> &mut AstNode {
         if dot.sub == null {
             workspace.error_handler.report_error_at(dot.location, "compile_dot: anonymous not implemented")
             poison(dot)
             return dot
         }
 
-        original_sub := dot.sub
+        mut original_sub := dot.sub
         dot.sub.scope = dot.scope
         dot.sub <- compile_node(&*dot.sub, ctx)
         handle_poison(dot, *dot.sub)
 
-        match dot.sub.typ {
+        dot.sub_type = match dot.sub.typ {
             TypeInfoPointer($ti) -> {
-                deref := workspace.new_ast(AstUnary(
-                    id          = -1
-                    location    = dot.sub.location
-                    scope       = dot.sub.scope
-                    sub         = &*dot.sub
-                    operator    = .Deref
-                ))
-                dot.sub <- compile_node(&*deref, ctx.with_expected(ti.target))
-                handle_poison(dot, *dot.sub)
+                // deref := workspace.new_ast(AstUnary(
+                //     id          = -1
+                //     location    = dot.sub.location
+                //     scope       = dot.sub.scope
+                //     sub         = &*dot.sub
+                //     operator    = .Deref
+                // ))
+                // dot.sub <- compile_node(&*deref, ctx.with_expected(ti.target))
+                // handle_poison(dot, *dot.sub)
+                dot.address_mode = .Address
+                ti.target
+            }
+            TypeInfoReference($ti) -> {
+                // deref := workspace.new_ast(AstUnary(
+                //     id          = -1
+                //     location    = dot.sub.location
+                //     scope       = dot.sub.scope
+                //     sub         = &*dot.sub
+                //     operator    = .Deref
+                // ))
+                // dot.sub <- compile_node(&*deref, ctx.with_expected(ti.target))
+                // handle_poison(dot, *dot.sub)
+                dot.address_mode = .Address
+                ti.target
+            }
+            $ti -> {
+                dot.address_mode = .Value
+                ti
             }
         }
 
         name := dot.name.name
-        match dot.sub.typ {
+        match dot.sub_type {
             TypeInfoArray($ti) -> {
                 if name == "length" or name == "count" { // @todo: remove length eventually
                     dot.typ = @type_info(int)
@@ -571,7 +562,7 @@ impl CompileNode {
                 }
 
                 // check if member with this name exists
-                member : ^TypeInfoStructMember = null
+                mut member : ^TypeInfoStructMember = null
                 for(by_ref=true) mem in ti.members {
                     if mem.name == name {
                         member = mem
@@ -586,7 +577,8 @@ impl CompileNode {
                     return dot
                 }
 
-                func : ^TypeInfoImplFunction = null
+                // check if function is in typeinfo
+                mut func : ^TypeInfoImplFunction = null
                 for(by_ref=true) ti.impl_funcs {
                     if it.name == name {
                         func = ^*it
@@ -619,26 +611,149 @@ impl CompileNode {
                     }
                 }
                 
-                // @todo: find functions with this name
+                // search for function in impl blocks
+                mut symbol : Option[Symbol] = None
+
+                // @TODO: somehow get symbol of type
+                // match AstNode.get_original_symbol(&*dot.sub) {
+                //     Some($original_symbol) -> match original_symbol {
+                //         .OriginalNode($node) -> {
+                //             symbol = node.scope.get_impl_symbol(dot.sub_type, dot.name.name)
+                //         }
+
+                //         _ -> @assert(false)
+                //     }
+                //     None -> {}
+                // }
+
+                if symbol == .None {
+                    symbol = dot.scope.get_impl_symbol(dot.sub_type, dot.name.name)
+                }
+
+                match &symbol {
+                    Some($symbol) -> {
+                        dot.original_symbol = Some(*symbol)
+                        dot.typ, dot.value = get_type_and_value_of_symbol(symbol)
+
+                        if dot.value == .Poison {
+                            poison(dot)
+                            return dot
+                        }
+
+                        func_type := match dot.typ {
+                            TypeInfoFunction($ti_func) -> ti_func
+                            _ -> {
+                                workspace.error_handler.report_error_at(dot.name.location, "'{}' is not a function but '{}'", [dot.name.name, dot.typ])
+                                poison(dot)
+                                return dot
+                            }
+                        }
+
+                        if func_type.param_types.length == 0 {
+                            workspace.error_handler.report_error_at(dot.name.location, "Impl function '{}' has no self parameter. Type is '{}'", [dot.name.name, dot.typ])
+                            poison(dot)
+                            return dot
+                        }
+
+                        self_param_type := *func_type.param_types[0]
+
+                        match self_param_type {
+                            $ti if ti == dot.sub.typ -> {
+                                // ok, nothing to do
+                            }
+                            TypeInfoReference($ti) -> {
+                                if dot.address_mode == .Value {
+                                    original_sub = workspace.new_ast(AstUnary(
+                                        id          = -1
+                                        location    = original_sub.location
+                                        scope       = original_sub.scope
+                                        sub         = &*original_sub
+                                        operator    = if ti.is_mut then .RefMut else .Ref
+                                    ))
+                                }
+                            }
+                            _ -> {
+                                if dot.address_mode == .Address {
+                                    original_sub = workspace.new_ast(AstUnary(
+                                        id          = -1
+                                        location    = original_sub.location
+                                        scope       = original_sub.scope
+                                        sub         = &*original_sub
+                                        operator    = .Deref
+                                    ))
+                                }
+                            }
+                        }
+
+                        return compile_node(&*workspace.new_ast(AstUfc(
+                            id          = -1
+                            location    = dot.location
+                            scope       = dot.scope
+                            typ         = dot.typ
+                            value_expr  = &*original_sub
+                            symbol      = *symbol
+                            value       = dot.value
+                        )), ctx)
+                    }
+
+                    None -> {}
+                }
 
                 workspace.error_handler.report_error_at(dot.name.location, "Struct '{}' has no member or function '{}'", [ti.name, name])
                 poison(dot)
                 return dot
             }
 
+            TypeInfoType($ti) -> {
+                typ := dot.sub.value.as_type()
+
+                mut symbol : Option[Symbol] = None
+                match AstNode.get_original_symbol(&*dot.sub) {
+                    Some($original_symbol) -> match original_symbol {
+                        .OriginalNode($node) -> {
+                            symbol = node.scope.get_impl_symbol(typ, dot.name.name)
+                        }
+
+                        _ -> @assert(false)
+                    }
+                    None -> {}
+                }
+
+                if symbol == .None {
+                    symbol = dot.scope.get_impl_symbol(typ, dot.name.name)
+                }
+
+                match &symbol {
+                    Some($symbol) -> {
+                        dot.original_symbol = Some(*symbol)
+                        dot.typ, dot.value = get_type_and_value_of_symbol(symbol)
+                    }
+
+                    None -> {}
+                }
+
+                if dot.typ == null {
+                    workspace.error_handler.report_error_at(dot.location, "Unknown symbol '{}' in type {}", [dot.name.name, typ])
+                    poison(dot)
+                    return dot
+                }
+
+            }
+
             TypeInfoModule(_) -> {
-                @assert(dot.sub.value == .Module)
-                file := dot.sub.value.Module
+                file := dot.sub.value.as_module()
 
                 dot.name.scope = file.global_scope
                 AstNode.set_flags(dot.name, .OnlyPubDeclarations)
                 compile_node(dot.name, ctx)
                 dot.typ = dot.name.typ
                 dot.value = dot.name.value
+                dot.symbol = dot.name.symbol
+                dot.original_symbol = dot.name.original_symbol
             }
 
             _ -> {
-                workspace.error_handler.report_error_at(dot.sub.location, "Invalid type on left size of '.': '{}'", [dot.sub.typ])
+                workspace.error_handler.report_error_at(dot.sub.location, "Invalid type on left side of '.': '{}'", [dot.sub.typ])
                 poison(dot)
                 return dot
             }
@@ -647,7 +762,38 @@ impl CompileNode {
         return dot
     }
 
-    compile_assignment :: (&Self, ass: &AstAssignment, ctx: CNContext) -> &AstNode {
+    borrow_mutably :: (&mut Self, node: &mut AstNode, deref: bool) -> bool {
+        if deref {
+            match node.typ {
+                TypeInfoReference($ti) -> { return ti.is_mut }
+                TypeInfoPointer($ti) -> { return ti.is_mut }
+                _ -> {}
+            }
+        }
+
+        return match node {
+            AstIdentifier($id) -> match id.symbol {
+                .Decl($decl) -> decl.mutable
+                _ -> false
+            }
+
+            AstDot($dot) -> {
+                @assert(dot.sub != null)
+                self.borrow_mutably(&*dot.sub, true)
+            }
+
+            AstUnary($un) if un.operator == .Deref -> {
+                self.borrow_mutably(&*un.sub, true)
+            }
+
+            $node -> {
+                @assert(false)
+                false
+            }
+        }
+    }
+
+    compile_assignment :: (&mut Self, ass: &mut AstAssignment, ctx: CNContext) -> &mut AstNode {
         // @todo: check if assignment is of form <expr>[<index>] = <value>
         // and the []set operator is overridden
         // in that case turn it into @typeof(<expr>)."[]set"(<expr>, <index>, <value>)
@@ -657,6 +803,11 @@ impl CompileNode {
         handle_poison(ass, ass.pattern)
 
         // @todo: check if pattern is lvalue
+        if !AstNode.has_flags(ass.pattern, .LValue) {
+            workspace.error_handler.report_error_at(ass.pattern.location, "Can't assign to non-lvalue")
+            poison(ass)
+            return ass
+        }
 
         ass.value_expr.scope = ass.scope
         ass.value_expr <- compile_node(ass.value_expr, ctx.with_expected(ass.pattern.typ))
@@ -668,6 +819,12 @@ impl CompileNode {
                 ass.value_expr.location,
                 "Can't assign value of type '{}' to pattern of type '{}'",
                 [ass.value_expr.typ, ass.pattern.typ])
+            poison(ass)
+            return ass
+        }
+
+        if !self.borrow_mutably(ass.pattern, false) {
+            workspace.error_handler.report_error_at(ass.pattern.location, "Can't assign to immutable pattern")
             poison(ass)
             return ass
         }
@@ -763,10 +920,10 @@ impl CompileNode {
         return ass
     }
     
-    compile_array :: (&Self, arr: &AstArray, ctx: CNContext) -> &AstNode {
+    compile_array :: (&mut Self, arr: &mut AstArray, ctx: CNContext) -> &mut AstNode {
         arr.typ = @type_info(void)
 
-        expected : ^TypeInfo = null
+        mut expected : ^TypeInfo = null
         if ctx.expected != null then match &*ctx.expected {
             TypeInfoArray($arr_type) -> { expected = arr_type.target }
         }
@@ -809,7 +966,7 @@ impl CompileNode {
         return arr
     }
 
-    compile_array_type :: (&Self, arr: &AstArrayType, ctx: CNContext) -> &AstNode {
+    compile_array_type :: (&mut Self, arr: &mut AstArrayType, ctx: CNContext) -> &mut AstNode {
         arr.typ = @type_info(type)
 
         count : Option[int] = if arr.count == null {
@@ -864,12 +1021,12 @@ impl CompileNode {
         return arr
     }
 
-    compile_ufc :: (&Self, ufc: &AstUfc, ctx: CNContext) -> &AstNode {
+    compile_ufc :: (&mut Self, ufc: &mut AstUfc, ctx: CNContext) -> &mut AstNode {
         // ufc.value
         return ufc
     }
 
-    compile_unary :: (&Self, un: &AstUnary, ctx: CNContext) -> &AstNode {
+    compile_unary :: (&mut Self, un: &mut AstUnary, ctx: CNContext) -> &mut AstNode {
         un.sub.scope = un.scope
         return match un.operator {
             .Neg    -> compile_unary_neg(un, ctx)
@@ -882,7 +1039,7 @@ impl CompileNode {
         }
     }
 
-    compile_unary_neg :: (&Self, un: &AstUnary, ctx: CNContext) -> &AstNode {
+    compile_unary_neg :: (&mut Self, un: &mut AstUnary, ctx: CNContext) -> &mut AstNode {
         un.sub.scope = un.scope
         un.sub <- compile_node(un.sub, ctx)
 
@@ -915,7 +1072,7 @@ impl CompileNode {
         return un
     }
 
-    compile_unary_not :: (&Self, un: &AstUnary, ctx: CNContext) -> &AstNode {
+    compile_unary_not :: (&mut Self, un: &mut AstUnary, ctx: CNContext) -> &mut AstNode {
         un.sub.scope = un.scope
         un.sub <- compile_node(un.sub, ctx.with_expected(@type_info(bool)))
 
@@ -940,7 +1097,7 @@ impl CompileNode {
         return un
     }
 
-    compile_unary_ptr_or_ref :: (&Self, un: &AstUnary, ctx: CNContext) -> &AstNode {
+    compile_unary_ptr_or_ref :: (&mut Self, un: &mut AstUnary, ctx: CNContext) -> &mut AstNode {
         mutable, reference, str := match un.operator {
             .Ref    -> false, true, "reference"
             .RefMut -> true, true, "reference"
@@ -979,7 +1136,7 @@ impl CompileNode {
                 }
                 AstDot($dot) -> {
                     if mutable {
-                        node := dot.sub
+                        mut node := dot.sub
                         loop {
                             match node {
                                 AstDot($dot) -> {
@@ -1016,7 +1173,7 @@ impl CompileNode {
         return un
     }
 
-    compile_unary_deref :: (&Self, un: &AstUnary, ctx: CNContext) -> &AstNode {
+    compile_unary_deref :: (&mut Self, un: &mut AstUnary, ctx: CNContext) -> &mut AstNode {
         un.sub.scope = un.scope
         un.sub <- compile_node(un.sub, ctx)
         handle_poison(un, un.sub)
@@ -1047,7 +1204,7 @@ impl CompileNode {
         return un
     }
 
-    compile_binary :: (&Self, bin: &AstBinary, ctx: CNContext) -> &AstNode {
+    compile_binary :: (&mut Self, bin: &mut AstBinary, ctx: CNContext) -> &mut AstNode {
         bin.left.scope = bin.scope
         bin.right.scope = bin.scope
 
@@ -1151,7 +1308,7 @@ impl CompileNode {
         return bin
     }
 
-    compile_if :: (&Self, iff: &AstIf, ctx: CNContext) -> &AstNode {
+    compile_if :: (&mut Self, iff: &mut AstIf, ctx: CNContext) -> &mut AstNode {
         iff.condition.scope = iff.scope
         compile_node(iff.condition, ctx.with_expected(@type_info(bool)))
         if iff.condition.typ == null {
@@ -1192,7 +1349,102 @@ impl CompileNode {
         return iff
     }
 
-    compile_import :: (&Self, node: &AstImport, ctx: CNContext) -> &AstNode {
+    split_const_decl :: (&mut Self, decl: &mut AstConstDecl, context: $T, on_decl: fn(&mut Self, &mut AstConstDecl, T), on_error: fn(&mut Self, &mut AstConstDecl, T)) {
+        match decl.pattern {
+            AstIdentifier($id) -> {
+                decl.name = id.name
+                on_decl(self, decl, context)
+            }
+
+            AstTuple($tuple) -> {
+                @assert(false, "TODO: not implemented")
+                // for(by_ref=false) value in tuple.values {
+                //     sub_access := workspace.get_compiler().new_ast(AstDeclRef(decl = .ConstDecl(decl)))
+
+                // }
+            }
+
+            _ -> {
+                on_error(self, decl, context)
+            }
+        }
+    }
+
+    compile_impl :: (&mut Self, node: &mut AstImpl, ctx: CNContext) -> &mut AstNode {
+        node.target_expr.scope = node.scope
+        compile_node(node.target_expr, ctx.with_expected(@type_info(type)))
+        handle_poison(node, node.target_expr)
+
+        // check if node.target_expr is type
+        if node.target_expr.typ != @type_info(type) {
+            workspace.error_handler.report_error_at(
+                node.target_expr.location,
+                "Target of impl block must be a type, found {}",
+                [node.target_expr.typ]
+            )
+            poison(node)
+            return node
+        }
+
+        if node.trait_expr != null {
+            node.trait_expr.scope = node.scope
+            compile_node(&*node.trait_expr, ctx.with_expected(@type_info(type)))
+            handle_poison(node, node.trait_expr)
+        }
+
+        // register this impl in the current scope
+        if node.trait_expr == null {
+            node.scope.add_impl_for_type(^*node)
+        }
+
+        node.sub_scope = workspace.new_scope(node.scope)
+        node.functions.reserve(node.children.count())
+        jobs := Array[^CompilationJob].create()
+
+        for(by_ref=false) child in &mut node.children {
+            child.scope = node.sub_scope
+            AstNode.set_flags(&*child, .AllowPubModifier)
+
+            match child {
+                AstConstDecl($decl) -> {
+                    split_const_decl(&*decl, (node, &jobs), on_decl = (self, decl, ctx) => {
+                        define_const_decl(decl, &*self.workspace)
+
+                        match decl.value_expr {
+                            AstFunction($func) -> {
+                                ctx[0].functions.add(func)
+                            }
+
+                            _ -> {}
+                        }
+                        job := self.workspace.create_job(CompileGlobalNodeJob.new(cast ^*decl))
+                        ctx[1].add(job)
+                        self.workspace.add_job(job)
+                    }, on_error = (self, decl, ctx) => {
+                        self.workspace.error_handler.report_error_at(decl.location, "Invalid pattern in constant declaration")
+                        poison(decl)
+                    })
+                }
+
+                _ -> {
+                    workspace.error_handler.report_error_at(child.location, "This type of expression is not allowed here")
+                    poison(&*child)
+                }
+            }
+        }
+
+        for job in &jobs {
+            wait_until(job.done, {
+                // nothing to see here...
+            })
+        }
+        node.children_done = true
+
+        node.typ = @type_info(void)
+        return node
+    }
+
+    compile_import :: (&mut Self, node: &mut AstImport, ctx: CNContext) -> &mut AstNode {
         match node.path {
             AstString($str) -> {
                 str.typ = @type_info(void)
@@ -1248,7 +1500,7 @@ impl CompileNode {
         return node
     }
 
-    compile_index :: (&Self, node: &AstIndex, ctx: CNContext) -> &AstNode {
+    compile_index :: (&mut Self, node: &mut AstIndex, ctx: CNContext) -> &mut AstNode {
         node.sub.scope = node.scope
         node.sub <- compile_node(node.sub, ctx)
         handle_poison(node, node.sub)
@@ -1260,7 +1512,7 @@ impl CompileNode {
                     poison(node)
                     return node
                 } else {
-                    for arg in &node.arguments {
+                    for arg in &mut node.arguments {
                         param := poly.params[it_index]
 
                         arg.scope = node.scope
@@ -1280,7 +1532,7 @@ impl CompileNode {
                 }
 
                 cloner := AstCloner(workspace.next_ast_id, workspace.ast_allocator)
-                clone := cloner.clone(^*poly.value_expr)
+                mut clone := cloner.clone(^*poly.value_expr)
                 if clone == null {
                     poison(node)
                     return node
@@ -1304,7 +1556,7 @@ impl CompileNode {
 
         match node.sub.typ {
             TypeInfoArray($ti) -> {
-                for arg in &node.arguments {
+                for arg in &mut node.arguments {
                     arg.scope = node.scope
                     compile_node(&**arg, ctx)
                     handle_poison(node, **arg)
@@ -1347,14 +1599,14 @@ impl CompileNode {
         return node
     }
 
-    compile_loop :: (&Self, lop: &AstLoop, ctx: CNContext) -> &AstNode {
+    compile_loop :: (&mut Self, lop: &mut AstLoop, ctx: CNContext) -> &mut AstNode {
         lop.typ = @type_info(void)
         lop.body.scope = lop.scope
         compile_node(lop.body, ctx)
         return lop
     }
 
-    compile_for :: (&Self, forr: &AstFor, ctx: CNContext) -> &AstNode {
+    compile_for :: (&mut Self, forr: &mut AstFor, ctx: CNContext) -> &mut AstNode {
         forr.typ = @type_info(void)
         forr.collection.scope = forr.scope
         compile_node(forr.collection, ctx.with_expected(null))
@@ -1363,7 +1615,7 @@ impl CompileNode {
         return forr
     }
 
-    compile_break :: (&Self, brake: &AstBreak, ctx: CNContext) -> &AstNode {
+    compile_break :: (&mut Self, brake: &mut AstBreak, ctx: CNContext) -> &mut AstNode {
         brake.typ = @type_info(void)
         if brake.value_expr != null {
             brake.value_expr.scope = brake.scope
@@ -1372,12 +1624,12 @@ impl CompileNode {
         return brake
     }
 
-    compile_continue :: (&Self, cont: &AstContinue, ctx: CNContext) -> &AstNode {
+    compile_continue :: (&mut Self, cont: &mut AstContinue, ctx: CNContext) -> &mut AstNode {
         cont.typ = @type_info(void)
         return cont
     }
 
-    compile_return :: (&Self, ret: &AstReturn, ctx: CNContext) -> &AstNode {
+    compile_return :: (&mut Self, ret: &mut AstReturn, ctx: CNContext) -> &mut AstNode {
         if self.function == null {
             workspace.error_handler.report_error_at(ret.location, "Can't use return outside of a function")
             return ret
@@ -1399,20 +1651,20 @@ impl CompileNode {
         return ret
     }
 
-    compile_defer :: (&Self, def: &AstDefer, ctx: CNContext) -> &AstNode {
+    compile_defer :: (&mut Self, def: &mut AstDefer, ctx: CNContext) -> &mut AstNode {
         def.typ = @type_info(void)
         def.sub.scope = def.scope
         compile_node(def.sub, ctx.with_expected(null))
         return def
     }
 
-    compile_string :: (&Self, str: &AstString, ctx: CNContext) -> &AstNode {
+    compile_string :: (&mut Self, str: &mut AstString, ctx: CNContext) -> &mut AstNode {
         str.typ = @type_info(string) // @todo: string_literal type
         str.value = .String(str.string_value)
         return str
     }
 
-    compile_struct :: (&Self, str: &AstStruct, ctx: CNContext) -> &AstNode {
+    compile_struct :: (&mut Self, str: &mut AstStruct, ctx: CNContext) -> &mut AstNode {
         str.typ = @type_info(type)
         str.sub_scope = workspace.new_scope(str.scope)
 
@@ -1435,8 +1687,8 @@ impl CompileNode {
         str.members_done = true
 
         // create type info
-        member_type_infos := workspace.new_type_data_array(TypeInfoStructMember, str.members.count())
-        for mem in &str.members {
+        mut member_type_infos := workspace.new_type_data_array(TypeInfoStructMember, str.members.count())
+        for mem in &mut str.members {
             member_type_infos[it_index].index = it_index
             member_type_infos[it_index].name = mem.name
             member_type_infos[it_index].typ = mem.var_type
@@ -1453,8 +1705,8 @@ impl CompileNode {
 
         // calculate size and alignment
         {
-            alignment   := 1
-            size        := 0
+            mut alignment   := 1
+            mut size        := 0
             for mem in &str.members {
                 wait_until(mem.var_type.size >= 0 and mem.var_type.alignment >= 0, {
                     workspace.error_handler.report_error_at(
@@ -1462,8 +1714,6 @@ impl CompileNode {
                         "Failed to compute size and alignment of struct type. Size of member '{}' unknown"
                         [mem.name])
                 })
-
-                // g_logger.log("mem: {}, {}", [mem.])
 
                 member_type_infos[it_index].offset = util.next_aligned_num(size, mem.var_type.alignment)
                 alignment = max(alignment, mem.var_type.alignment)
@@ -1481,22 +1731,27 @@ impl CompileNode {
         return str
     }
 
-    compile_bool :: (&Self, bol: &AstBool, ctx: CNContext) -> &AstNode {
+    compile_bool :: (&mut Self, bol: &mut AstBool, ctx: CNContext) -> &mut AstNode {
         bol.typ = @type_info(bool)
         bol.value = .Bool(bol.bool_value)
         return bol
     }
 
-    compile_number :: (&Self, num: &AstNumberLiteral, ctx: CNContext) -> &AstNode {
+    compile_number :: (&mut Self, num: &mut AstNumberLiteral, ctx: CNContext) -> &mut AstNode {
         num.typ = match num.value {
-            .Int(_) -> @type_info(int)
+            .Int(_) -> if ctx.expected != null then match ctx.expected {
+                TypeInfoInt($ti) -> cast(^TypeInfo) ctx.expected
+                _ -> @type_info(int)
+            } else {
+                @type_info(int)
+            }
             .Float(_) -> @type_info(f64)
             _ -> @assert(false)
         }
         return num
     }
 
-    compile_poly :: (&Self, poly: &AstPoly, ctx: CNContext) -> &AstNode {
+    compile_poly :: (&mut Self, poly: &mut AstPoly, ctx: CNContext) -> &mut AstNode {
         poly.param_scope = workspace.new_scope(poly.scope)
         poly.value_expr.scope = poly.param_scope
 
@@ -1529,8 +1784,9 @@ impl CompileNode {
         return poly
     }
 
-    compile_identifier :: (&Self, id: &AstIdentifier, ctx: CNContext) -> &AstNode {
+    compile_identifier :: (&mut Self, id: &mut AstIdentifier, ctx: CNContext) -> &mut AstNode {
         id.symbol = id.scope.get_symbol(id.name, AstNode.has_flags(id, .OnlyPubDeclarations))
+        
         match id.symbol {
             .Val($value) -> {
                 id.typ = value.typ
@@ -1543,6 +1799,7 @@ impl CompileNode {
                 })
                 id.typ = decl.value_expr.typ // @todo: get type of type expr if available
                 id.value = decl.value_expr.value
+                id.original_symbol = decl.original_symbol
             }
 
             .Decl($decl) -> {
@@ -1588,15 +1845,7 @@ impl CompileNode {
         return id
     }
 
-    compile_argument :: (&Self, arg: &AstArgument, ctx: CNContext) -> &AstNode {
-        arg.value_expr.scope = arg.scope
-        arg.value_expr <- compile_node(arg.value_expr, ctx)
-        arg.typ = arg.value_expr.typ
-        arg.value = arg.value_expr.value
-        return arg
-    }
-
-    compile_cast :: (&Self, cst: &AstCast, ctx: CNContext) -> &AstNode {
+    compile_cast :: (&mut Self, cst: &mut AstCast, ctx: CNContext) -> &mut AstNode {
         if cst.type_expr == null {
             workspace.error_handler.report_error_at(cst.location, "Auto cast not implemented yet.")
             poison(cst)
@@ -1638,7 +1887,41 @@ impl CompileNode {
         return cst
     }
 
-    compile_call :: (&Self, call: &AstCall, ctx: CNContext) -> &AstNode {
+    compile_char :: (&mut Self, node: &mut AstChar, ctx: CNContext) -> &mut AstNode {
+        node.typ = @type_info(char)
+        node.value = .Char(node.char_value)
+        return node
+    }
+
+    compile_argument :: (&mut Self, call: &mut AstCall, arg: &mut AstArgument, param_name: string, param_type: ^TypeInfo, ctx: CNContext) -> bool {
+        arg.scope = call.scope
+        arg.value_expr.scope = call.scope
+        arg.value_expr = compile_node(arg.value_expr, ctx.with_expected(param_type))
+
+        if arg.value_expr.value == .Poison {
+            return true
+        } else {
+            match check_type(arg.value_expr, param_type, arg.value_expr.typ) {
+                Ok($new) -> {
+                    arg.value_expr = new
+                }
+
+                Err() -> {
+                    workspace.error_handler.report_error_at(arg.location,
+                        "Type of argument ({}) does not match type of parameter '{}' ({}). No implicit conversion available.",
+                        [arg.value_expr.typ, param_name, param_type])
+                    return true
+                }
+            }
+        }
+
+        arg.typ = arg.value_expr.typ
+        arg.value = arg.value_expr.value
+
+        return false
+    }
+
+    compile_call :: (&mut Self, call: &mut AstCall, ctx: CNContext) -> &mut AstNode {
         call.function.scope = call.scope
         call.function <- compile_node(call.function, ctx.with_expected(null))
 
@@ -1649,18 +1932,21 @@ impl CompileNode {
 
         match call.function {
             AstUfc($ufc) -> {
-                new_args := Array[^AstArgument].create(call.arguments.count() + 1)
+                new_args := Array[^mut AstArgument].create(call.arguments.count() + 1)
                 new_args.add(workspace.new_ast(AstArgument(
                     location    = ufc.location
                     scope       = ufc.scope
                     name        = null
                     value_expr  = ufc.value_expr
+                    param       = .None
                 )))
                 for arg in &call.arguments {
                     new_args.add(*arg)
                 }
                 call.arguments = new_args
             }
+            
+            _ -> {}
         }
 
         {
@@ -1670,48 +1956,159 @@ impl CompileNode {
 
         match call.function.value {
             .Type($typ) -> {
-                if call.arguments.count() != 1 {
-                    workspace.error_handler.report_error_at(call.location, "Cast requires exactly one argument");
-                    poison(call)
-                    return call
+                match typ {
+                    TypeInfoStruct($str) -> {
+                        // wait_until(str.members_done, {
+                        //     // nothing to see here
+                        // })
+
+                        // get struct definition ast if available
+                        struct_decl : Option[&mut AstStruct] = match AstNode.get_original_symbol(call.function) {
+                            Some($original) -> match original {
+                                .OriginalNode($node) -> match node {
+                                    AstStruct($decl) -> Some(decl)
+                                    _ -> None
+                                }
+                                _ -> None
+                            }
+                            _ -> None
+                        }
+
+                        // check for too many arguments
+                        if call.arguments.count() > str.members.length {
+                            workspace.error_handler.report_error_at(call.location, "Too many arguments. Expected {}, got {}", [str.members.length, call.arguments.count()])
+                            poison(call)
+                            return call
+                        }
+
+                        // stores which fields have a corresponding argument
+                        // @todo: is @alloca possible here?
+                        provided_fields := @alloca(bool, str.members.length)
+                        C.memset(provided_fields.data, 0, cast provided_fields.length * @sizeof(bool))
+
+                        mut allow_unnamed := true
+                        for(by_ref=false) arg, i in &mut call.arguments {
+                            field : &mut TypeInfoStructMember = if arg.name == null {
+                                if !allow_unnamed {
+                                    workspace.error_handler.report_error_at(arg.location, "Unnamed argument not allowed here")
+                                    poison(call)
+                                    return call
+                                }
+
+                                // g_logger.log("[compile_struct_init] unnamed arg {} ({}) -> field {}", [i, arg.location, arg.param])
+                                cast(&mut TypeInfoStructMember) str.members[i]
+                            } else {
+                                name := arg.name.name
+                                allow_unnamed = false
+                                field := str.get_member(name)
+                                if field == null {
+                                    workspace.error_handler.report_error_at(arg.name.location, "Struct '{}' has no field called '{}'",
+                                        [str.name, name])
+                                    poison(call)
+                                    return call
+                                }
+
+                                // g_logger.log("[compile_struct_init] named arg '{}' {} ({}) -> field {}", [name, i, arg.location, arg.param])
+                                &mut *field
+                            }
+
+                            arg.param = .StructMember(field)
+                            *provided_fields[field.index] = true
+
+                            // compile value
+                            arg.value_expr.scope = call.scope
+                            arg.value_expr = compile_node(arg.value_expr, ctx.with_expected(field.typ))
+                            handle_poison(&*arg, arg.value_expr)
+
+                            // check type of argument
+                            if !TypeInfo.same(arg.value_expr.typ, field.typ) {
+                                match struct_decl {
+                                    Some($decl) -> workspace.error_handler.report_error_at(
+                                        arg.value_expr.location,
+                                        "Type of argument ({}) does not match type of struct field ({})",
+                                        [arg.value_expr.typ, field.typ],
+                                        details = [("Struct field '{}.{}' defined here: {}", [str.name, field.name, decl.members[field.index].location])])
+                                    None -> workspace.error_handler.report_error_at(
+                                        arg.value_expr.location,
+                                        "Type of argument ({}) does not match type of struct field ({})",
+                                        [arg.value_expr.typ, field.typ])
+                                }
+                                poison(call)
+                                return call
+                            }
+
+                            arg.typ = arg.value_expr.typ
+                            arg.value = arg.value_expr.value
+                        }
+
+                        // check if there are struct fields which have no corresponding argument
+                        mut any_fields_missing := false
+                        for field_set in provided_fields {
+                            if !field_set {
+                                any_fields_missing = true
+                                field := str.members[it_index]
+                                match struct_decl {
+                                    Some($decl) -> workspace.error_handler.report_error_at(
+                                        call.location,
+                                        "Missing argument for struct field '{} : {}'",
+                                        [field.name, field.typ],
+                                        details = [("Struct field '{}.{}' defined here: {}", [str.name, field.name, decl.members[field.index].location])])
+                                    None -> workspace.error_handler.report_error_at(
+                                        call.location,
+                                        "Missing argument for struct field '{} : {}'",
+                                        [field.name, field.typ])
+                                }
+                            }
+                        }
+                        if any_fields_missing {
+                            poison(call)
+                            return call
+                        }
+
+                        call.typ = str
+                        return call
+                    }
+
+                    _ -> {
+                        if call.arguments.count() != 1 {
+                            workspace.error_handler.report_error_at(call.location, "Cast requires exactly one argument");
+                            poison(call)
+                            return call
+                        }
+
+                        // create cast
+                        cast_ast := workspace.new_ast(AstCast(
+                            id          = -1
+                            location    = call.location
+                            scope       = call.scope
+                            type_expr   = ^*call.function
+                            value_expr  = &**call.arguments[0]
+                        ))
+
+                        return compile_node(&*cast_ast, ctx)
+                    }
                 }
-
-                // create cast
-                cast_ast := workspace.new_ast(AstCast(
-                    id          = -1
-                    location    = call.location
-                    scope       = call.scope
-                    type_expr   = ^*call.function
-                    value_expr  = &**call.arguments[0]
-                ))
-
-                return compile_node(&*cast_ast, ctx)
             }
 
             .Function($func) -> {
-                // call.typ = cast typ
-                // call.value = value
                 call.ast_function = func
 
                 if call.arguments.count() != func.params.length {
                     workspace.error_handler.report_error_at(call.location, "Wrong number of arguments in function call")
+                    poison(call)
+                    return call
                 } else {
-                    for arg in &call.arguments {
+                    mut any_arg_failed := false
+                    for(by_ref=false) arg in &call.arguments {
                         param := func.params[it_index]
-
-                        arg.scope = call.scope
-                        *arg = cast ^*compile_node(&**arg, ctx.with_expected(param.var_type))
-
-                        if arg.value == .Poison {
-                            poison(call)
-                            return call
+                        if compile_argument(call, &*arg, param.name, param.var_type, ctx) {
+                            any_arg_failed = true
                         }
-                        if !TypeInfo.same(arg.typ, param.var_type) {
-                            workspace.error_handler.report_error_at(
-                                arg.location,
-                                "Type of argument ({}) does not match type of parameter '{}' ({}).",
-                                [arg.typ, param.name, param.var_type])
-                        }
+                    }
+
+                    if any_arg_failed {
+                        poison(call)
+                        return call
                     }
                 }
 
@@ -1728,22 +2125,32 @@ impl CompileNode {
                         call.location,
                         "Wrong number of arguments ({}) in function call. Expected {}",
                         [call.arguments.count(), func_type.param_types.length])
+                    poison(call)
+                    return call
                 } else {
-                    for arg in &call.arguments {
+                    mut any_arg_failed := false
+                    for(by_ref=false) arg in &call.arguments {
                         param_type := *func_type.param_types[it_index]
-                        arg.scope = call.scope
-                        *arg = cast ^*compile_node(&**arg, ctx.with_expected(param_type))
+                        if compile_argument(call, &*arg, "", param_type, ctx) {
+                            any_arg_failed = true
+                        }
+                        // arg.scope = call.scope
+                        // *arg = cast ^*compile_node(&**arg, ctx.with_expected(param_type))
 
-                        if arg.value == .Poison {
-                            poison(call)
-                            return call
-                        }
-                        if !TypeInfo.same(arg.typ, param_type) {
-                            workspace.error_handler.report_error_at(
-                                arg.location,
-                                "Type of argument ({}) does not match type of parameter ({}).",
-                                [arg.typ, param_type])
-                        }
+                        // if arg.value == .Poison {
+                        //     any_arg_failed = true
+                        // } else if !TypeInfo.same(arg.typ, param_type) {
+                        //     any_arg_failed = true
+                        //     workspace.error_handler.report_error_at(
+                        //         arg.location,
+                        //         "Type of argument ({}) does not match type of parameter ({}).",
+                        //         [arg.typ, param_type])
+                        // }
+                    }
+
+                    if any_arg_failed {
+                        poison(call)
+                        return call
                     }
                 }
             }
@@ -1759,21 +2166,29 @@ impl CompileNode {
                         "Wrong number of arguments ({}) in function call. Expected {}",
                         [call.arguments.count(), func_type.param_types.length])
                 } else {
-                    for arg in &call.arguments {
+                    mut any_arg_failed := false
+                    for(by_ref=false) arg in &call.arguments {
                         param_type := *func_type.param_types[it_index]
-                        arg.scope = call.scope
-                        *arg = cast ^*compile_node(&**arg, ctx.with_expected(param_type))
+                        if compile_argument(call, &*arg, "", param_type, ctx) {
+                            any_arg_failed = true
+                        }
+                        // arg.scope = call.scope
+                        // *arg = cast ^*compile_node(&**arg, ctx.with_expected(param_type))
 
-                        if arg.value == .Poison {
-                            poison(call)
-                            return call
-                        }
-                        if !TypeInfo.same(arg.typ, param_type) {
-                            workspace.error_handler.report_error_at(
-                                arg.location,
-                                "Type of argument ({}) does not match type of parameter ({}).",
-                                [arg.typ, param_type])
-                        }
+                        // if arg.value == .Poison {
+                        //     any_arg_failed = true
+                        // } else if !TypeInfo.same(arg.typ, param_type) {
+                        //     any_arg_failed = true
+                        //     workspace.error_handler.report_error_at(
+                        //         arg.location,
+                        //         "Type of argument ({}) does not match type of parameter ({}).",
+                        //         [arg.typ, param_type])
+                        // }
+                    }
+
+                    if any_arg_failed {
+                        poison(call)
+                        return call
                     }
                 }
             }
@@ -1788,7 +2203,7 @@ impl CompileNode {
         return call
     }
 
-    compile_block :: (&Self, block: &AstBlock, ctx: CNContext) -> &AstNode {
+    compile_block :: (&mut Self, block: &mut AstBlock, ctx: CNContext) -> &mut AstNode {
         block.sub_scope = workspace.new_scope(block.scope)
 
         for child in &block.children {
@@ -1815,7 +2230,7 @@ impl CompileNode {
         return block
     }
 
-    compile_function :: (&Self, func: &AstFunction, ctx: CNContext) -> &AstNode {
+    compile_function :: (&mut Self, func: &mut AstFunction, ctx: CNContext) -> &mut AstNode {
         // debug_log("compile_function")
         // @todo: polymorphic functions
 
@@ -1920,13 +2335,13 @@ impl CompileNode {
         // generate byte code
         debug_log("compile_function '{}': Generate Bytecode", [func.name])
         code_gen := ByteCodeGenerator.new(&workspace.string_database, &*workspace.error_handler, workspace.bc_allocator)
-        code_gen.get().generate_code_for_function(^*func)
+        code_gen.get_mut().generate_code_for_function(^*func)
 
         debug_log("compile_function '{}': End", [func.name])
         return func
     }
 
-    compile_decl :: (&Self, decl: &AstDecl, ctx: CNContext) -> &AstNode {
+    compile_decl :: (&mut Self, decl: &mut AstDecl, ctx: CNContext) -> &mut AstNode {
         decl.typ = @type_info(void)
         if !AstNode.has_flags(decl, .IsDefinedInScope) {
 
@@ -2001,6 +2416,7 @@ impl CompileNode {
 
         // check if var_type is valid
         if !validate_variable_type(decl.var_type, decl.pattern.location) {
+            poison(decl)
             return decl
         }
 
@@ -2009,7 +2425,7 @@ impl CompileNode {
         return decl
     }
 
-    validate_variable_type :: (&Self, typ: ^TypeInfo, location: Location) -> bool {
+    validate_variable_type :: (&mut Self, typ: ^TypeInfo, location: Location) -> bool {
         @assert(typ != null)
         if typ == @type_info(void) {
             workspace.error_handler.report_error_at(location, "Variable can't have type {}", [typ])
@@ -2019,8 +2435,7 @@ impl CompileNode {
         return true
     }
 
-    compile_const_decl :: (&Self, decl: &AstConstDecl, ctx: CNContext) -> &AstNode {
-        debug_log("compile_const_decl")
+    compile_const_decl :: (&mut Self, decl: &mut AstConstDecl, ctx: CNContext) -> &mut AstNode {
         decl.typ = @type_info(void)
 
         if !AstNode.has_flags(decl, .IsDefinedInScope) {
@@ -2034,26 +2449,10 @@ impl CompileNode {
                 }
             }
 
+            decl.name = name
 
             // set name of value expr if its a function or struct/trait/enum
-            match decl.value_expr {
-                AstFunction($func) -> {
-                    func.name = name
-                }
-                AstStruct($str) -> {
-                    str.name = name
-                }
-                AstEnum($en) -> {
-                    en.name = name
-                }
-                AstTrait($tr) -> {
-                    tr.name = name
-                }
-                AstPoly($poly) -> {
-                    poly.name = name
-                }
-            }
-
+            AstNode.set_name(decl.value_expr, name)
 
             // define symbol but only if not _
             if name != "_" {
@@ -2082,10 +2481,7 @@ impl CompileNode {
             }
         }
 
-        debug_log("compile_const_decl 1")
-
         decl.value_expr <- evaluate_node(decl.value_expr, ctx.with_expected(decl.var_type))
-        debug_log("compile_const_decl 2")
         decl.value = decl.value_expr.value
 
         if decl.value == .Poison {
@@ -2093,7 +2489,7 @@ impl CompileNode {
             return decl
         }
 
-        debug_log("compile_const_decl 3")
+        decl.original_symbol = AstNode.get_original_symbol(decl.value_expr)
 
         if decl.value_expr.typ != @type_info(void) and decl.value == .None {
             workspace.error_handler.report_error_at(decl.value_expr.location, "Value is not constant")
@@ -2109,12 +2505,85 @@ impl CompileNode {
 
         return decl
     }
+
+    check_type :: (&mut Self, node: &mut AstNode, target: ^TypeInfo, source: ^TypeInfo) -> Result[&mut AstNode, ()] {
+        if TypeInfo.same(target, source) {
+            return Ok(node)
+        }
+
+        match target, source {
+            // cast(&T) &mut T
+            TypeInfoReference($target), TypeInfoReference($source) if TypeInfo.same(target.target, source.target) and !target.is_mut and source.is_mut -> {
+                // @todo: create cast
+
+                // @temp
+                node.typ = target
+                return Ok(node)
+
+                // deref := workspace.new_ast(AstCast(
+                //     id          = -1
+                //     location    = dot.sub.location
+                //     scope       = dot.sub.scope
+                //     sub         = &*dot.sub
+                //     operator    = .Deref
+                // ))
+            }
+        }
+
+        return Err()
+    }
 }
 
 
 #file_scope
 
-handle_poison :: (node: &AstNode, possible_poison: Code) #macro {
+define_decl :: (decl: &mut AstDecl, workspace: &mut Workspace) {
+    decl.name = match &*decl.pattern {
+        AstIdentifier($id) -> id.name
+        _ -> {
+            workspace.error_handler.report_error_at(decl.location, "Non-identifier patterns not implemented yet")
+            return
+        }
+    }
+
+    // define symbol but only if not _
+    if decl.name != "_" {
+        match decl.scope.define_decl(decl.name, decl) {
+            Err() -> {
+                workspace.error_handler.report_error_at(decl.pattern.location, "A symbol with this name already exists in this scope")
+            }
+        }
+    }
+    AstNode.set_flags(decl, .IsDefinedInScope)
+}
+
+define_const_decl :: (decl: &mut AstConstDecl, workspace: &mut Workspace) {
+    decl.value_expr.scope = decl.scope
+    
+    name := match decl.pattern {
+        AstIdentifier($id) -> id.name
+        _ -> {
+            workspace.error_handler.report_error_at(decl.location, "Non-identifier patterns not implemented yet")
+            return
+        }
+    }
+
+    // set name of value expr if its a function or struct/trait/enum
+    AstNode.set_name(decl.value_expr, name)
+
+    // define symbol but only if not _
+    if name != "_" {
+        match decl.scope.define_const_decl(name, decl) {
+            Err() -> {
+                workspace.error_handler.report_error_at(decl.pattern.location, "A symbol with this name already exists in this scope")
+            }
+        }
+    }
+
+    AstNode.set_flags(decl, .IsDefinedInScope)
+}
+
+handle_poison :: (node: &mut AstNode, possible_poison: Code) #macro {
     if @insert(possible_poison).value == .Poison {
         node.typ = @type_info(void)
         node.value = .Poison
@@ -2122,7 +2591,7 @@ handle_poison :: (node: &AstNode, possible_poison: Code) #macro {
     }
 }
 
-poison :: (node: &AstNode) {
+poison :: (node: &mut AstNode) {
     node.typ = @type_info(void)
     node.value = .Poison
 }
@@ -2138,14 +2607,14 @@ impl TypeInfo {
 
             // TypeInfoPointer($a), TypeInfoPointer($b) -> a.is_mut == b.is_mut and same(a.target, b.target)
             // TypeInfoReference($a), TypeInfoReference($b) -> a.is_mut == b.is_mut and same(a.target, b.target)
-            TypeInfoPointer($a), TypeInfoPointer($b) -> same(a.target, b.target)
-            TypeInfoReference($a), TypeInfoReference($b) -> same(a.target, b.target)
+            TypeInfoPointer($a), TypeInfoPointer($b) -> same(a.target, b.target) and a.is_mut == b.is_mut
+            TypeInfoReference($a), TypeInfoReference($b) -> same(a.target, b.target) and a.is_mut == b.is_mut
 
             // temp
             // TypeInfoPointer($a), TypeInfoReference($b) -> a.is_mut == b.is_mut and same(a.target, b.target)
             // TypeInfoReference($a), TypeInfoPointer($b) -> a.is_mut == b.is_mut and same(a.target, b.target)
-            TypeInfoPointer($a), TypeInfoReference($b) -> same(a.target, b.target)
-            TypeInfoReference($a), TypeInfoPointer($b) -> same(a.target, b.target)
+            TypeInfoPointer($a), TypeInfoReference($b) -> same(a.target, b.target) and a.is_mut == b.is_mut
+            TypeInfoReference($a), TypeInfoPointer($b) -> same(a.target, b.target) and a.is_mut == b.is_mut
             //
 
             TypeInfoFunction($a), TypeInfoFunction($b) -> {
@@ -2165,5 +2634,9 @@ impl TypeInfo {
 
             _ -> false
         }
+    }
+
+    matches_pattern :: (&Self, pattern: ^TypeInfo) -> bool {
+        return TypeInfo.same(^*self, pattern)
     }
 }
