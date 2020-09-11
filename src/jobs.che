@@ -375,9 +375,11 @@ impl CompileNode {
             defer context.interp.pop_frame()
             match compiler.code_runner.get().run(&*context.interp) {
                 .Error($msg) -> {
+                    mut stacktrace := String.empty()
+                    context.interp.write_stacktrace(&mut stacktrace, self.workspace.get_compiler())
                     frame := context.interp.top_frame()
                     location := frame.func.debug_info.get_location_for_ip(frame.ip)
-                    workspace.error_handler.report_error_at(location, "{}", [msg])
+                    workspace.error_handler.report_error_at(location, "{}", [msg], details = [("Stacktrace:`n{}", [stacktrace.slice()])])
                     poison(node)
                     return node
                 }
@@ -1558,16 +1560,20 @@ impl CompileNode {
             TypeInfoArray($ti) -> {
                 for arg in &mut node.arguments {
                     arg.scope = node.scope
-                    compile_node(&**arg, ctx)
+                    arg.value_expr.scope = arg.scope
+                    arg.value_expr = compile_node(arg.value_expr, ctx)
+                    arg.typ = arg.value_expr.typ
+                    arg.value = arg.value_expr.value
                     handle_poison(node, **arg)
                 }
-                node.index = *node.arguments[0]
 
                 if node.arguments.count() != 1 {
                     workspace.error_handler.report_error_at(node.location, "Wrong number of arguments. Expected 1")
                     poison(node)
                     return node
                 }
+
+                node.index = *node.arguments[0]
 
                 match node.index.typ {
                     TypeInfoInt(_) -> {

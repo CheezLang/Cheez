@@ -1,79 +1,22 @@
 std :: import "std.cheez"
 io :: std.IO
 
-foo :: (a: &int) {}
-bar :: (a: &mut int) {}
-
 _ :: Main()
 Main :: () {
-    mut a : int = 5
-    ar_mut : &mut int = &mut a
-    ar : &int = &a
-
-    foo(ar_mut)
-    foo(ar)
-    bar(ar_mut)
-    // bar(ar)
-
-    mut f := Foo(123, "123")
-    fa := &mut f
-
-    f.a = "123"
-    io.print_string(f.a)
-    f.print()
-    io.print_string(f.a)
-    io.print_string("------")
-
-    f.a = "123"
-    io.print_string(f.a)
-    fa.print()
-    io.print_string(f.a)
-    io.print_string("------")
-
-    f.a = "123"
-    io.print_string(f.a)
-    f.print2()
-    io.print_string(f.a)
-    io.print_string("------")
-
-    f.a = "123"
-    io.print_string(f.a)
-    fa.print2()
-    io.print_string(f.a)
-    io.print_string("------")
-
-    f.a = "123"
-    io.print_string(fa.a)
-    io.print_string((&f).a)
-    io.print_string(f.a)
-    io.print_string(Foo(456, "456").a)
+    foo(1, 0)
 }
 
-Foo :: struct {
-    uiae : int
-    a : string
+foo :: (a: int, b: int) {
+    baz()
+    bar()
+    std.IO.print_int(a / b)
 }
 
-impl Foo {
-    test :: "hi"
-
-    print :: (self: &mut Foo) {
-        _print("print(): ")
-        io.print_string(self.a)
-        self.a = "456"
-    }
-
-    print2 :: (mut self: Foo) {
-        _print("print2(): ")
-        io.print_string(self.a)
-        self.a = "456"
-    }
+bar :: () {
+    arr : [6]int
+    io.print_int(arr[-1])
 }
 
-// _ :: build()
-// build :: () {
-//     std.print_string("build()")
-//     compiler := _get_compiler()
-//     ws := compiler.create_workspace()
-//     job := ws.add_load_file_job("basic_cheez.cheez")
-// }
+baz :: () -> int {
+    return
+}

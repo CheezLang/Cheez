@@ -403,6 +403,11 @@ impl Interpreter {
             *cast(^mut T)^mut *frame.stack[frame.sp + offset - 1] = val
         }
 
+        assert :: (condition: Code, message: string, args: []^any) #macro {
+            if !@insert(condition) {
+                return .Error(fmt.format(message, args))
+            }
+        }
 
         // fetch
         frame.ip_prev = frame.ip
@@ -417,14 +422,6 @@ impl Interpreter {
                 fmt.align(25), Instruction.pretty_print(frame.code[frame.ip..])
                 fmt.align(45), frame.dump_stack()
             ], "stdout")
-
-            //     frame.func.debug_info.get_location_for_ip(frame.ip).line
-            //     fmt.align(6), fp
-            //     fmt.align(11), frame.sp
-            //     fmt.align(17), frame.ip
-            //     fmt.align(25), Instruction.pretty_print(frame.code[frame.ip..])
-            //     fmt.align(45), frame.dump_stack()
-            // ])
         }}
 
         frame.ip += 1
@@ -625,17 +622,50 @@ impl Interpreter {
             }
             .Div -> {
                 typ := arg(InstNumTyp)
+
+                division_by_zero_text :: "Division by zero: {}/{}"
+
                 match typ {
-                    .F32 -> set(f32, -1, peek(f32, -1) / peek(f32, 0))
-                    .F64 -> set(f64, -1, peek(f64, -1) / peek(f64, 0))
-                    .I8  -> set(i8,  -1, peek(i8,  -1) / peek(i8,  0))
-                    .I16 -> set(i16, -1, peek(i16, -1) / peek(i16, 0))
-                    .I32 -> set(i32, -1, peek(i32, -1) / peek(i32, 0))
-                    .I64 -> set(i64, -1, peek(i64, -1) / peek(i64, 0))
-                    .U8  -> set(u8,  -1, peek(u8,  -1) / peek(u8,  0))
-                    .U16 -> set(u16, -1, peek(u16, -1) / peek(u16, 0))
-                    .U32 -> set(u32, -1, peek(u32, -1) / peek(u32, 0))
-                    .U64 -> set(u64, -1, peek(u64, -1) / peek(u64, 0))
+                    .F32 -> {
+                        assert(peek(f32, 0) != 0, division_by_zero_text, [peek(f32, -1), peek(f32, 0)])
+                        set(f32, -1, peek(f32, -1) / peek(f32, 0))
+                    }
+                    .F64 -> {
+                        assert(peek(f64, 0) != 0, division_by_zero_text, [peek(f64, -1), peek(f64, 0)])
+                        set(f64, -1, peek(f64, -1) / peek(f64, 0))
+                    }
+                    .I8  -> {
+                        assert(peek(i8, 0) != 0, division_by_zero_text, [peek(i8, -1), peek(i8, 0)])
+                        set(i8,  -1, peek(i8,  -1) / peek(i8,  0))
+                    }
+                    .I16 -> {
+                        assert(peek(i16, 0) != 0, division_by_zero_text, [peek(i16, -1), peek(i16, 0)])
+                        set(i16, -1, peek(i16, -1) / peek(i16, 0))
+                    }
+                    .I32 -> {
+                        assert(peek(i32, 0) != 0, division_by_zero_text, [peek(i32, -1), peek(i32, 0)])
+                        set(i32, -1, peek(i32, -1) / peek(i32, 0))
+                    }
+                    .I64 -> {
+                        assert(peek(i64, 0) != 0, division_by_zero_text, [peek(i64, -1), peek(i64, 0)])
+                        set(i64, -1, peek(i64, -1) / peek(i64, 0))
+                    }
+                    .U8  -> {
+                        assert(peek(u8, 0) != 0, division_by_zero_text, [peek(u8, -1), peek(u8, 0)])
+                        set(u8,  -1, peek(u8,  -1) / peek(u8,  0))
+                    } 
+                    .U16 -> {
+                        assert(peek(u16, 0) != 0, division_by_zero_text, [peek(u16, -1), peek(u16, 0)])
+                        set(u16, -1, peek(u16, -1) / peek(u16, 0))
+                    }
+                    .U32 -> {
+                        assert(peek(u32, 0) != 0, division_by_zero_text, [peek(u32, -1), peek(u32, 0)])
+                        set(u32, -1, peek(u32, -1) / peek(u32, 0))
+                    }
+                    .U64 -> {
+                        assert(peek(u64, 0) != 0, division_by_zero_text, [peek(u64, -1), peek(u64, 0)])
+                        set(u64, -1, peek(u64, -1) / peek(u64, 0))
+                    }
                 }
                 frame.sp -= 1
             }
@@ -646,6 +676,8 @@ impl Interpreter {
                     .F64 -> set(f64, -1, cast(f64) int(peek(f64, -1)) % int(peek(f64, 0)))
                     // .F32 -> set(f32, -1, peek(f32, -1) % peek(f32, 0)) // @todo
                     // .F64 -> set(f64, -1, peek(f64, -1) % peek(f64, 0)) // @todo
+                    .F32 -> { return .Error(fmt.format("Not implemented: f32 % f32")) }
+                    .F64 -> { return .Error(fmt.format("Not implemented: f64 % f64")) }
                     .I8  -> set(i8,  -1, peek(i8,  -1) % peek(i8,  0))
                     .I16 -> set(i16, -1, peek(i16, -1) % peek(i16, 0))
                     .I32 -> set(i32, -1, peek(i32, -1) % peek(i32, 0))
@@ -889,6 +921,9 @@ impl Interpreter {
             }
 
             .Return -> {
+                if frame.sp <= 0 {
+                    return .Error(fmt.format("Trying to return a value from a function but the stack is empty. This is probably a bug in the compiler."))
+                }
                 @assert(frame.sp > 0)
                 if const CLEAR_STACK_SLOTS_BEFORE_USE then C.memset(^*frame.stack[0], 0, cast frame.return_value_slots * @sizeof(u64))
                 C.memmove(^*frame.stack[0], ^*frame.stack[frame.sp - frame.return_value_slots], cast frame.return_value_slots * @sizeof(u64))
@@ -902,15 +937,7 @@ impl Interpreter {
             .ReturnVoid -> {
                 top := self.top_frame()
                 if top.func != null and top.func.ast_function != null and top.func.ast_function.return_type != @type_info(void) {
-                    C.memset(^*frame.stack[0], 0, cast frame.return_value_slots * @sizeof(u64))
-                    error_handler.report_error("Trying to return without value in non-void function: {}{}{}{}{}{}{}{}{}{}{}{}", [
-                        fmt.align(60), frame.func.debug_info.get_location_for_ip(frame.ip_prev).line
-                        fmt.align(65), fp
-                        fmt.align(70), frame.sp
-                        fmt.align(76), frame.ip_prev
-                        fmt.align(84), Instruction.pretty_print(frame.code[frame.ip_prev..])
-                        fmt.align(104), frame.dump_stack()
-                    ])
+                    return .Error(fmt.format("Trying to return from a function with non-void return type but no value was provided."))
                 }
                 pop_frame()
                 if fp >= 0 {
@@ -966,6 +993,18 @@ impl Interpreter {
         }
 
         return .Done
+    }
+
+    write_stacktrace :: (&Self, result: &mut String, text_provider: &TextProvider) {
+        for(reverse=true) frame in self.get_stackframes() {
+            if frame.func != null {
+                location := frame.func.debug_info.get_location_for_ip(frame.ip_prev)
+                fmt.format_into(result, "{}:{}:{}`n", [location.file, location.line, location.column])
+                append_source_at_location_to_string(result, location, text_provider)
+            } else {
+                fmt.format_into(result, "ip = {}: {}`n", [frame.ip, Instruction.pretty_print(frame.code[frame.ip_prev..])])
+            }
+        }
     }
 }
 
@@ -1102,4 +1141,95 @@ impl Instruction {
 
 slots_for_size :: (size_in_bytes: int) -> int {
     return (size_in_bytes + 7) / 8
+}
+
+append_source_at_location_to_string :: (result: &mut String, location: Location, text_provider: &TextProvider) {
+    text := text_provider.get_text(location.file)
+
+    // returns index of first character in the same line
+    find_start_of_line :: (text: string, mut byte_index: int) -> int {
+        bytes := text.bytes
+        mut start := byte_index
+        byte_index -= 1
+        while byte_index >= 0 and *bytes[byte_index] != u8('`n') {
+            start = byte_index
+            byte_index -= 1
+        }
+        return start
+    }
+
+    // returns index of \n at the end of the same line
+    find_end_of_line :: (text: string, mut byte_index: int) -> int {
+        bytes := text.bytes
+        while byte_index < text.bytes.length and *bytes[byte_index] != u8('`n') {
+            byte_index += 1
+        }
+        return byte_index
+    }
+
+    // 
+    get_line_range :: (text: string, start_line: int, mut byte_index: int, byte_length: int) -> RangeInclusive[int] {
+        bytes    := text.bytes
+        mut end_line := start_line
+        end      := byte_index + byte_length
+
+        while byte_index < end, byte_index += 1 {
+            if *bytes[byte_index] == u8('`n') {
+                end_line += 1
+            }
+        }
+
+        return start_line ..= end_line
+    }
+
+    print_line_number :: (result: &mut String, line: int, max_line_digits: int) {
+        line_digits := count_digits(line)
+        for 0 .. max_line_digits - line_digits {
+            result.append_char(' ')
+        }
+        fmt.format_into(result, "{}", [line])
+        result.append_string("> ")
+    }
+
+    // print line containing error
+    {
+        // byte range of entire error location
+        total_range := location.byte_index .. location.byte_index + location.byte_length
+
+        lines := get_line_range(text, location.line, location.byte_index, location.byte_length)
+        max_line_digits := count_digits(lines.end)
+
+        mut index := location.byte_index
+        for line in lines {
+            // byte range of current line
+            line_range  := find_start_of_line(text, index) .. find_end_of_line(text, index)
+
+            // byte range of error in current line
+            error_range := index .. min(line_range.end, total_range.end)
+
+            sub1 := text[line_range.start  .. error_range.start]
+            sub2 := text[error_range.start .. error_range.end]
+            sub3 := text[error_range.end   .. line_range.end]
+
+            sub1_bytes := sub1.bytes
+            sub2_bytes := sub2.bytes
+            sub3_bytes := sub3.bytes
+
+            print_line_number(result, line, max_line_digits)
+            result.append_string(sub1)
+            result.append_string(sub2)
+            result.append_string(sub3)
+            result.append_char('`n')
+
+            for 0 .. (max_line_digits + 2 + sub1.bytes.length) {
+                result.append_char(' ')
+            }
+            for 0 .. sub2.bytes.length {
+                result.append_char('^')
+            }
+            result.append_char('`n')
+
+            index = line_range.end + 1
+        }
+    }
 }

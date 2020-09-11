@@ -1,3 +1,3 @@
 Push-Location test
-&../bin/cheez build -thread_count 2
+&../bin/cheez build -thread_count 1
 Pop-Location
