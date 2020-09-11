@@ -52,14 +52,14 @@ Main :: () {
     logger := FileLogger.new(log_path.slice())
     // g_logger = cast ^logger.get()
     {
-        l : ^Logger = ^*logger.get()
+        l : ^mut Logger = ^*logger.get_mut()
         Logger.set_global_logger(l)
     }
 
     debugger := CheezDebugAdapter.new()
     adapter := DebugAdapter.new(debugger)
 
-    adapter.get().run()
+    adapter.get_mut().run()
 }
 
 DebuggerCallbacks :: trait {
@@ -107,11 +107,11 @@ impl Debugger {
         ))
     }
 
-    set_callbacks :: (&Self, callbacks: ^DebuggerCallbacks) {
+    set_callbacks :: (&mut Self, callbacks: ^DebuggerCallbacks) {
         self.callbacks = callbacks
     }
 
-    store_old_state :: (&Self) {
+    store_old_state :: (&mut Self) {
         if current_interp == null {
             return
         }
@@ -123,38 +123,38 @@ impl Debugger {
         self.line_break = frame.func.debug_info.get_location_for_ip(frame.ip).line
     }
 
-    launch :: (&Self) {
+    launch :: (&mut Self) {
         resume()
     }
 
-    pause :: (&Self) {
+    pause :: (&mut Self) {
         running = false
         // cond_pause.get().wait(lock_pause.get())
         // lock_pause.get().release()
     }
 
-    resume :: (&Self) {
+    resume :: (&mut Self) {
         running = true
         store_old_state()
         self.break_cond = BreakCondition.None
         cond_run.get().notify()
     }
 
-    step :: (&Self) {
+    step :: (&mut Self) {
         running = true
         store_old_state()
         self.break_cond = BreakCondition.Step
         cond_run.get().notify()
     }
 
-    step_in :: (&Self) {
+    step_in :: (&mut Self) {
         running = true
         store_old_state()
         self.break_cond = BreakCondition.StepIn
         cond_run.get().notify()
     }
 
-    step_out :: (&Self) {
+    step_out :: (&mut Self) {
         running = true
         store_old_state()
         self.break_cond = BreakCondition.StepOut
@@ -197,7 +197,7 @@ impl Debugger {
 }
 
 impl CodeRunner for Debugger {
-    run :: (&Self, interp: &Interpreter) -> InterpStepResult {
+    run :: (&mut Self, interp: &mut Interpreter) -> InterpStepResult {
         self.current_interp = interp
 
         self.store_old_state()
@@ -253,7 +253,7 @@ impl CodeRunner for Debugger {
                 }
 
                 step_result := interp.step()
-                match step_result {
+                match &step_result {
                     .Done -> {
                         // running = false
                         if callbacks != null then callbacks.continued()
@@ -268,7 +268,6 @@ impl CodeRunner for Debugger {
                         running = false
                         if callbacks != null then callbacks.error(msg.slice())
                         break
-                        // return
                     }
                 }
 
@@ -292,8 +291,8 @@ impl CodeRunner for Debugger {
     }
 }
 
-g_debug_adapter : ^CheezDebugAdapter = null
-g_print_buffer : ^String = null
+mut g_debug_adapter : ^mut CheezDebugAdapter = null
+mut g_print_buffer : ^mut String = null
 
 println_string :: (interp: ^Interpreter) {
     if g_print_buffer == null {
@@ -326,7 +325,7 @@ print_string :: (interp: ^Interpreter) {
 }
 
 debug_break :: (interp: ^Interpreter) {
-    g_debug_adapter.debugger.get().pause()
+    g_debug_adapter.debugger.get_mut().pause()
 }
 
 CheezDebugAdapter :: struct CommandHandler {
@@ -362,9 +361,9 @@ impl CheezDebugAdapter {
         return variable_refs[index - 1].get()
     }
 
-    add_variable_ref:: (&Self, var_ref: Rc[VariableRef]) -> int {
+    add_variable_ref:: (&Self, mut var_ref: Rc[VariableRef]) -> int {
         index := variable_refs.count() + 1
-        var_ref.get().index = index
+        var_ref.get_mut().index = index
         variable_refs.add(var_ref)
         return index
     }
@@ -389,12 +388,12 @@ impl CheezDebugAdapter {
         self.adapter.emit_terminated_event()
     }
 
-    compile_cheez_program :: (&Self, path: string) {
+    compile_cheez_program :: (&mut Self, path: string) {
         compiler = Compiler.new(1, ^*self)
-        main_workspace := compiler.get().get_main_workspace()
+        main_workspace := compiler.get_mut().get_main_workspace()
 
         // register native functions
-        compiler.get().user_defined_builtins.add((
+        compiler.get_mut().user_defined_builtins.add((
             "_get_compiler",
             Symbol.NativeFunc(NativeFunctionWrapper.new(
                 cast(NativeFunction) (interp) => {
@@ -405,27 +404,27 @@ impl CheezDebugAdapter {
             ))
         ))
 
-        compiler.get().user_defined_builtins.add((
+        compiler.get_mut().user_defined_builtins.add((
             "_println",
             Symbol.NativeFunc(NativeFunctionWrapper.new(cast(NativeFunction) println_string, fn(string)))
         ))
-        compiler.get().user_defined_builtins.add((
+        compiler.get_mut().user_defined_builtins.add((
             "_print",
             Symbol.NativeFunc(NativeFunctionWrapper.new(cast(NativeFunction) print_string, fn(string)))
         ))
 
-        compiler.get().user_defined_builtins.add((
+        compiler.get_mut().user_defined_builtins.add((
             "_debugbreak",
             Symbol.NativeFunc(NativeFunctionWrapper.new(cast(NativeFunction) debug_break, fn()))
         ))
         //
 
         //
-        compiler.get().code_runner = debugger.clone().change_type(CodeRunner)
-        main_workspace.get().create_and_add_job(LoadFileJob.new(path.to_owned()))
-        compiler.get().start_compilation()
+        compiler.get_mut().code_runner = debugger.clone().change_type(CodeRunner)
+        main_workspace.get_mut().create_and_add_job(LoadFileJob.new(path.to_owned()))
+        compiler.get_mut().start_compilation()
 
-        compiler.get().on_done(cast self.on_done)
+        compiler.get_mut().on_done(cast self.on_done)
     }
 }
 
@@ -475,16 +474,16 @@ impl CommandHandler for CheezDebugAdapter {
         return Ok()
     }
 
-    launch :: (&Self, arguments: DapReqLaunch) -> Result[(), String] {
-        debugger.get().set_callbacks(^*self)
+    launch :: (&mut Self, arguments: DapReqLaunch) -> Result[(), String] {
+        debugger.get_mut().set_callbacks(^*self)
 
         if arguments.program.slice().ends_with(CHEEZ_FILE_EXTENSION) {
             self.compile_cheez_program(arguments.program.slice())
         } else {
-            return Err(fmt.format("Can't debug the file '{}'", [arguments.program]))
+            return Err(fmt.format("Can't debug the file '{}'", [arguments.program.slice()]))
         }
 
-        debugger.get().launch()
+        debugger.get_mut().launch()
 
         return Ok()
     }
@@ -506,13 +505,13 @@ impl CommandHandler for CheezDebugAdapter {
     }
 
     stacktrace :: (&Self) -> Result[Array[DapStackFrame], String] {
-        debugger.get().pause()
+        debugger.get_mut().pause()
 
         frames := debugger.get().current_interp.get_stackframes()
 
         stack_frames := Array[DapStackFrame].create()
 
-        use_prev_ip := false
+        mut use_prev_ip := false
         for(by_ref=true, reverse=true) frame in frames {
             defer { use_prev_ip = true }
             ip := if use_prev_ip then frame.ip_prev else frame.ip
@@ -540,7 +539,7 @@ impl CommandHandler for CheezDebugAdapter {
     }
 
     scopes :: (&Self, arguments: DapReqScopes) -> Result[Array[DapScope], String] {
-        debugger.get().pause()
+        debugger.get_mut().pause()
         self.clear_variable_refs()
 
         frame_id := arguments.frame_id
@@ -567,7 +566,7 @@ impl CommandHandler for CheezDebugAdapter {
     }
 
     variables :: (&Self, arguments: DapReqVariables) -> Result[Array[DapVariable], String] {
-        debugger.get().pause()
+        debugger.get_mut().pause()
 
         index := arguments.variables_reference
         start := arguments.start.unwrap_or(0)
@@ -582,7 +581,7 @@ impl CommandHandler for CheezDebugAdapter {
         var_ref := self.get_variable_reference(index)
         vars := var_ref.get_variables(start, count)
         for var in &vars {
-            var_index := self.add_variable_ref(var.clone())
+            mut var_index := self.add_variable_ref(var.clone())
 
             match var.get() {
                 Variable($var) -> {
@@ -606,32 +605,32 @@ impl CommandHandler for CheezDebugAdapter {
     }
 
     pause :: (&Self) -> Result[(), String] {
-        debugger.get().pause()
+        debugger.get_mut().pause()
         adapter.emit_stop_event("pause")
         return Ok()
     }
 
     resume :: (&Self) -> Result[(), String] {
         self.clear_variable_refs()
-        debugger.get().resume()
+        debugger.get_mut().resume()
         return Ok()
     }
 
     next :: (&Self) -> Result[(), String] {
         self.clear_variable_refs()
-        debugger.get().step()
+        debugger.get_mut().step()
         return Ok()
     }
 
     step_in :: (&Self) -> Result[(), String] {
         self.clear_variable_refs()
-        debugger.get().step_in()
+        debugger.get_mut().step_in()
         return Ok()
     }
 
     step_out :: (&Self) -> Result[(), String] {
         self.clear_variable_refs()
-        debugger.get().step_out()
+        debugger.get_mut().step_out()
         return Ok()
     }
 }
@@ -764,10 +763,10 @@ Variable :: struct VariableRef {
 }
 
 impl Variable {
-    new :: (interp: ^Interpreter, frame: int, name: String, type_info: ^TypeInfo, pointer: ^void) -> Rc[Variable] {
-        any_value := Any.from_pointers(pointer, type_info)
+    new :: (interp: ^Interpreter, frame: int, name: String, mut type_info: ^TypeInfo, mut pointer: ^void) -> Rc[Variable] {
+        mut any_value := Any.from_pointers(pointer, type_info)
 
-        named_variables, indexed_variables := match type_info {
+        mut named_variables, indexed_variables := match type_info {
             TypeInfoTuple($ti)      -> ti.members.length, 0
             TypeInfoStruct($ti)     -> ti.members.length, 0
             TypeInfoEnum($ti)       -> (if {
@@ -991,7 +990,7 @@ impl(T: type) VariableProvider for Array[T] {
     get_variables :: (&Self, interp: ^Interpreter, frame: int, start: int, count: int) -> Array[Rc[VariableRef]] {
         result := Array[Rc[VariableRef]].create()
 
-        for self {
+        for(by_ref=true) self.slice() {
             var := Variable.new(interp, frame, fmt.format("[{}]", [it_index]), @type_info(T), ^*it)
             result.add(var.change_type(VariableRef))
         }
@@ -1018,7 +1017,7 @@ impl(K: type, V: type) VariableProvider for Map[K, V] {
         result := Array[Rc[VariableRef]].create()
 
         for self {
-            var := Variable.new(interp, frame, fmt.format("{}", [*it.name]), @type_info(V), ^*it.value)
+            var := Variable.new(interp, frame, fmt.format("{}", [*it.key]), @type_info(V), ^*it.value)
             result.add(var.change_type(VariableRef))
         }
 
