@@ -21,7 +21,7 @@ Lexer :: struct {
     offset      : int
     string_db   : &StringDatabase
     indent      := 0
-    do_stack    := Array[int].new()
+    do_stack    := Array[(line: int, indent: int)].new()
 
     // interned keywords
     KwLambda    : string
@@ -138,7 +138,7 @@ impl Lexer {
     }
 
     push_indent :: (&mut Self) {
-        self.do_stack.push(self.indent)
+        self.do_stack.push((self.location.line, self.indent))
     }
 
     expect_token :: (&mut Self, typ: TokenType) -> bool, Token {
@@ -166,22 +166,6 @@ impl Lexer {
         return self.next_queue.pop()
     }
 
-    skip_whitespace :: (&mut Self) {
-        while true {
-            tok := self.peek_token()
-
-            match tok.typ {
-                TokenType.NewLine -> {
-                    self.next_token()
-                }
-
-                $_ -> {
-                    break
-                }
-            }
-        }
-    }
-
     skip_line :: (&mut Self) {
         while true {
             tok := self.next_token()
@@ -199,6 +183,10 @@ impl Lexer {
 
     advance :: (&mut Self) {
         skip_newlines_and_comments()
+
+        if self.do_stack.count() > 0 and self.do_stack.peek_last().line == location.line {
+            self.do_stack.pop()
+        }
 
         mut token := Token(
             typ      = TokenType.EOF
@@ -621,7 +609,7 @@ impl Lexer {
     }
 
     skip_newlines_and_comments :: (&mut Self) {
-        mut emit_newline_token := false
+        mut newline_pos := Option[Location].None
         mut new_indent := self.indent
         while location.byte_index - offset < text.bytes.length {
             curr, curr_len := peek_char(0)
@@ -639,49 +627,61 @@ impl Lexer {
                 location.column += 1
             } else if curr == '`n' {
                 new_indent = -1
-                emit_newline_token = true
-
                 location.line += 1
                 location.byte_index += int(curr_len)
                 location.column = 1
+                newline_pos = Some(location)
+
             } else {
                 if new_indent == -1 {
                     new_indent = (self.location.column - 1) / 4
-                    // io.formatln("{}, indent = {} -> {}", [self.location, self.indent, new_indent])
 
-                    while self.indent < new_indent {
-                        if do_stack.count() > 0 and *do_stack.peek_last() == self.indent {
-                            self.next_queue.push(Token(
-                                typ      = .OpenBrace
-                                location = location
-                                suffix   = .None
-                                data     = .None
-                            ))
+                    if do_stack.count() > 0 and do_stack.peek_last().indent == self.indent and new_indent <= self.indent {
+                        self.next_queue.push(Token(
+                            typ      = .Error
+                            location = self.location
+                            data     = .String("Missing indentation")
+                        ))
+                        self.next_queue.push(Token(
+                            typ      = .OpenBrace
+                            location = location
+                        ))
+                        self.next_queue.push(Token(
+                            typ      = .ClosingBrace
+                            location = location
+                        ))
+                        do_stack.pop()
+                    } else {
+                        while self.indent < new_indent {
+                            if do_stack.count() > 0 and do_stack.peek_last().indent == self.indent {
+                                self.next_queue.push(Token(
+                                    typ      = .OpenBrace
+                                    location = location
+                                ))
+                            }
+                            self.indent += 1
                         }
-                        self.indent += 1
-                    }
-                    while self.indent > new_indent {
-                        self.indent -= 1
-                        if do_stack.count() > 0 and *do_stack.peek_last() == self.indent {
-                            self.next_queue.push(Token(
-                                typ      = .ClosingBrace
-                                location = location
-                                suffix   = .None
-                                data     = .None
-                            ))
-                            do_stack.pop()
+                        while self.indent > new_indent {
+                            self.indent -= 1
+                            if do_stack.count() > 0 and do_stack.peek_last().indent == self.indent {
+                                self.next_queue.push(Token(
+                                    typ      = .ClosingBrace
+                                    location = location
+                                ))
+                                do_stack.pop()
+                            }
                         }
                     }
 
                     self.indent = new_indent
                 }
-                if emit_newline_token {
-                    next_queue.push(Token(
-                        typ      = TokenType.NewLine
-                        location = location
-                        suffix   = None
-                        data     = TokenData.None
+                match newline_pos {
+                    Some($loc) -> next_queue.push(Token(
+                        typ      = .NewLine
+                        location = loc
                     ))
+
+                    None -> {}
                 }
                 break
             }
@@ -824,8 +824,8 @@ impl Location {
 Token :: struct #copy {
     typ         : TokenType
     location    : Location
-    suffix      : Option[string]
-    data        : TokenData
+    suffix      := Option[string].None
+    data        := TokenData.None
 }
 
 TokenData :: enum #copy {
@@ -833,6 +833,15 @@ TokenData :: enum #copy {
     String  : string
     Integer : int
     Double  : double
+}
+
+impl TokenData {
+    get_string :: (&Self) -> string {
+        return match *self {
+            .String($str) -> str
+            _ -> @assert(false, "Not a string")
+        }
+    }
 }
 
 impl Printable for Location {

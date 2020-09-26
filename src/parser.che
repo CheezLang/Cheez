@@ -63,7 +63,7 @@ impl Parser {
     }
 
     parse_node :: (&Self) -> ^mut AstNode {
-        lexer.skip_whitespace()
+        self.skip_whitespace()
         if check_token(.EOF) {
             return null
         }
@@ -89,7 +89,7 @@ impl Parser {
 
         if check_token(.Equal) {
             lexer.next_token()
-            lexer.skip_whitespace()
+            self.skip_whitespace()
             value_expr := parse_comma_expression(allow_comma, allow_function)
 
             return allocate(AstAssignment(
@@ -100,7 +100,7 @@ impl Parser {
             ))
         } else if check_token(.Colon) {
             lexer.next_token()
-            lexer.skip_whitespace()
+            self.skip_whitespace()
 
             type_expr : ^mut AstNode = if check_token(.Equal) or check_token(.Colon) {
                 null
@@ -110,7 +110,7 @@ impl Parser {
 
             if check_token(.Colon) {
                 lexer.next_token()
-                lexer.skip_whitespace()
+                self.skip_whitespace()
                 value_expr := parse_comma_expression(allow_comma, allow_function)
 
                 return allocate(AstConstDecl(
@@ -122,7 +122,7 @@ impl Parser {
                 ))
             } else if check_token(.Equal) {
                 lexer.next_token()
-                lexer.skip_whitespace()
+                self.skip_whitespace()
                 value_expr := parse_comma_expression(allow_comma, allow_function)
 
                 return allocate(AstDecl(
@@ -152,7 +152,7 @@ impl Parser {
         pattern := try(parse_comma_expression(allow_comma, allow_function))
 
         consume(.Colon)
-        lexer.skip_whitespace()
+        self.skip_whitespace()
 
         type_expr : ^mut AstNode = if check_token(.Equal) or check_token(.Colon) {
             null
@@ -162,7 +162,7 @@ impl Parser {
 
         if check_token(.Equal) {
             lexer.next_token()
-            lexer.skip_whitespace()
+            self.skip_whitespace()
             value_expr := try(parse_comma_expression(allow_comma, allow_function))
 
             return allocate(AstDecl(
@@ -176,7 +176,7 @@ impl Parser {
             ))
         } else if check_token(.Colon) {
             lexer.next_token()
-            lexer.skip_whitespace()
+            self.skip_whitespace()
             value_expr := try(parse_comma_expression(allow_comma, allow_function))
 
             if mutable {
@@ -216,7 +216,7 @@ impl Parser {
 
             while check_token(.Comma) {
                 lexer.next_token()
-                lexer.skip_whitespace()
+                self.skip_whitespace()
                 values.add(parse_binary(true, allow_function))
                 location = location.to(values.peek_last().location)
             }
@@ -277,7 +277,7 @@ impl Parser {
             }
 
             lexer.next_token()
-            lexer.skip_whitespace()
+            self.skip_whitespace()
 
             id := next_id()
             right := parse_binary(allow_comma, allow_function, pre, left_asso)
@@ -445,7 +445,7 @@ impl Parser {
             }
 
             consume(.Comma)
-            lexer.skip_whitespace()
+            self.skip_whitespace()
         }
 
         end := consume(.ClosingBracket).location
@@ -483,7 +483,7 @@ impl Parser {
         children := Array[^mut AstNode].create()
 
         mut location := consume(.OpenBrace).location
-        lexer.skip_whitespace()
+        self.skip_whitespace()
 
         loop {
             mut next := *lexer.peek_token()
@@ -501,7 +501,7 @@ impl Parser {
             consume(.NewLine)
         }
 
-        lexer.skip_whitespace()
+        self.skip_whitespace()
         end := consume(.ClosingBrace).location
 
         location.end_line = end.end_line
@@ -517,15 +517,15 @@ impl Parser {
     parse_match :: (&Self, allow_comma: bool) -> ^mut AstNode {
         location := consume(.KwMatch).location
 
-        lexer.skip_whitespace()
+        self.skip_whitespace()
         value_expr : ^mut AstNode = if check_token(.OpenBrace) then null else parse_expression(allow_comma, false)
 
-        lexer.skip_whitespace()
+        self.skip_whitespace()
         consume(.OpenBrace)
 
         cases := Array[^mut AstMatchCase].create()
         loop {
-            lexer.skip_whitespace()
+            self.skip_whitespace()
             next := lexer.peek_token()
             if next.typ == .ClosingBrace or next.typ == .EOF {
                 break
@@ -533,7 +533,7 @@ impl Parser {
 
             pattern := try(parse_expression(true, false))
 
-            lexer.skip_whitespace()
+            self.skip_whitespace()
             condition : ^mut AstNode = if check_token(.KwIf) {
                 lexer.next_token()
                 try(parse_expression(true, false))
@@ -541,7 +541,7 @@ impl Parser {
                 null
             }
 
-            lexer.skip_whitespace()
+            self.skip_whitespace()
             consume(.Arrow)
 
             body := try(parse_expression(true, false))
@@ -568,7 +568,7 @@ impl Parser {
 
         mut location := consume(.KwIf).location
 
-        lexer.skip_whitespace()
+        self.skip_whitespace()
         condition := parse_expression(false, false)
 
         true_case := if check_token(.KwThen) {
@@ -578,8 +578,11 @@ impl Parser {
             if check_token(.KwDo) {
                 lexer.next_token()
                 lexer.push_indent()
+                self.skip_whitespace()
+                parse_expression(allow_comma, false)
+            } else {
+                parse_block()
             }
-            parse_block()
         }
 
         location = location.to(true_case.location)
@@ -589,9 +592,10 @@ impl Parser {
             expr := if check_token(.KwDo) {
                 lexer.next_token()
                 lexer.push_indent()
-                parse_block()
+                self.skip_whitespace()
+                parse_expression(allow_comma, false)
             } else {
-                lexer.skip_whitespace()
+                self.skip_whitespace()
                 parse_expression(allow_comma, false)
             }
             location = location.to(expr.location)
@@ -637,16 +641,16 @@ impl Parser {
         if check_token(.Comma) {
             it_pattern = expr
             lexer.next_token()
-            lexer.skip_whitespace()
+            self.skip_whitespace()
             index_name = try(parse_identifier())
 
-            lexer.skip_whitespace()
+            self.skip_whitespace()
             consume(.KwIn)
             collection = parse_expression(false, false)
         } else if check_token(.KwIn) {
             it_pattern = expr
             lexer.next_token()
-            lexer.skip_whitespace()
+            self.skip_whitespace()
             collection = parse_expression(false, false)
         } else {
             collection = expr
@@ -772,7 +776,7 @@ impl Parser {
 
             consume(.Comma)
             ends_in_comma = true
-            lexer.skip_whitespace()
+            self.skip_whitespace()
         }
 
         end := consume(.ClosingParen).location
@@ -780,7 +784,7 @@ impl Parser {
         if allow_function {
             if check_token(.KwConst) {
                 lexer.next_token()
-                lexer.skip_whitespace()
+                self.skip_whitespace()
                 body := parse_expression(allow_comma, false)
                 return allocate(AstPoly(
                     id          = next_id()
@@ -805,7 +809,7 @@ impl Parser {
 
             if check_token(.Arrow) {
                 lexer.next_token()
-                lexer.skip_whitespace()
+                self.skip_whitespace()
                 return_type_expr = try(parse_expression(true, false))
             }
 
@@ -815,6 +819,7 @@ impl Parser {
                 if check_token(.KwDo) {
                     lexer.next_token()
                     lexer.push_indent()
+                    self.skip_whitespace()
                 }
 
                 if check_token(.Semicolon) {
@@ -853,11 +858,11 @@ impl Parser {
 
         trait_expr : ^mut AstNode = if !check_token(.OpenBrace) then try(parse_expression(false, false)) else null
 
-        lexer.skip_whitespace()
+        self.skip_whitespace()
         consume(.OpenBrace)
 
         loop {
-            lexer.skip_whitespace()
+            self.skip_whitespace()
             next := lexer.peek_token()
             if next.typ == .ClosingBrace or next.typ == .EOF {
                 break
@@ -883,11 +888,11 @@ impl Parser {
 
         beg := consume(.KwEnum).location
 
-        lexer.skip_whitespace()
+        self.skip_whitespace()
         consume(.OpenBrace)
 
         loop {
-            lexer.skip_whitespace()
+            self.skip_whitespace()
             next := lexer.peek_token()
             if next.typ == .ClosingBrace or next.typ == .EOF {
                 break
@@ -912,11 +917,11 @@ impl Parser {
 
         beg := consume(.KwTrait).location
 
-        lexer.skip_whitespace()
+        self.skip_whitespace()
         consume(.OpenBrace)
 
         loop {
-            lexer.skip_whitespace()
+            self.skip_whitespace()
             next := lexer.peek_token()
             if next.typ == .ClosingBrace or next.typ == .EOF {
                 break
@@ -942,22 +947,22 @@ impl Parser {
 
         beg := consume(.KwImpl).location
 
-        lexer.skip_whitespace()
+        self.skip_whitespace()
         mut target := try(parse_expression(false, false))
 
-        lexer.skip_whitespace()
+        self.skip_whitespace()
         if check_token(.KwFor) {
             lexer.next_token()
-            lexer.skip_whitespace()
+            self.skip_whitespace()
             target_trait = target
             target = try(parse_expression(false, false))
-            lexer.skip_whitespace()
+            self.skip_whitespace()
         }
 
         consume(.OpenBrace)
 
         loop {
-            lexer.skip_whitespace()
+            self.skip_whitespace()
             next := lexer.peek_token()
             if next.typ == .ClosingBrace or next.typ == .EOF {
                 break
@@ -1028,7 +1033,11 @@ impl Parser {
             .CharLiteral    -> cast(^mut AstNode) parse_char_literal()
 
             _ -> {
-                error_handler.report_error_at(token.location, "Unexpected token {} in expression", [token.typ])
+                if token.typ == .Error {
+                    error_handler.report_error_at(token.location, "{}", [token.data.get_string()])
+                } else {
+                    error_handler.report_error_at(token.location, "Unexpected token {} in expression", [token.typ])
+                }
                 cast(^mut AstNode) null
             }
         }
@@ -1193,7 +1202,7 @@ impl Parser {
             }
 
             lexer.next_token()
-            lexer.skip_whitespace()
+            self.skip_whitespace()
             expr = try(parse_expression(false, true))
             location = location.to(expr.location)
         }
@@ -1211,7 +1220,7 @@ impl Parser {
         args := Array[^mut AstArgument].create()
 
         beg := consume(open).location
-        lexer.skip_whitespace()
+        self.skip_whitespace()
 
         loop {
             mut next := *lexer.peek_token()
@@ -1229,10 +1238,10 @@ impl Parser {
             if next.typ == close or next.typ == .EOF {
                 break
             } else if next.typ == .NewLine {
-                lexer.skip_whitespace()
+                self.skip_whitespace()
             } else {
                 consume(.Comma)
-                lexer.skip_whitespace()
+                self.skip_whitespace()
             }
         }
 
@@ -1286,11 +1295,30 @@ impl Parser {
                 }
             }
 
-            error_handler.report_error_at(tok.location, "Unexpected token {}, expected {}", [tok.typ, typ])
+            if tok.typ == .Error {
+                error_handler.report_error_at(tok.location, "Expected {}. {}", [typ, tok.data.get_string()])
+            } else {
+                error_handler.report_error_at(tok.location, "Unexpected token {}, expected {}", [tok.typ, typ])
+            }
+
             lexer.skip_line()
             return *tok
         }
 
         return lexer.next_token()
+    }
+
+    skip_whitespace :: (&Self) {
+        while true {
+            token := lexer.peek_token()
+            match token.typ {
+                .Error -> {
+                    error_handler.report_error_at(token.location, "{}", [token.data.get_string()])
+                    lexer.next_token()
+                }
+                .NewLine -> lexer.next_token()
+                _ -> break
+            }
+        }
     }
 }
