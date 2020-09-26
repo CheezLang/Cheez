@@ -3,20 +3,32 @@ io :: std.IO
 
 _ :: Main()
 Main :: () {
-    foo(1, 0)
+    foo(5, 2)
 }
 
-foo :: (a: int, b: int) {
+foo :: (a: int, b: int) do
     baz()
     bar()
     std.IO.print_int(a / b)
-}
+    if true {
+        if true {
+            io.print_string("lol")
+        }
+    }
+    if true do
+        if true do
+            io.print_string("lol2")
 
 bar :: () {
     arr : [6]int
-    io.print_int(arr[-1])
+    io.print_int(arr[1])
 }
 
 baz :: () -> int {
-    return
+    return 5
 }
+
+baz2 :: () -> int do
+    return 5
+
+baz3 :: () -> int do return 5

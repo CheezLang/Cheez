@@ -6,6 +6,8 @@ use import std.unicode
 use import std.printable
 use import std.io.fs
 use import std.rc
+use import std.ring_queue
+use import std.array
 
 C  :: import std.c
 io :: import std.io
@@ -15,44 +17,46 @@ io :: import std.io
 Lexer :: struct {
     text        : string
     location    : Location
-    peek        : Option[Token]
+    next_queue  : RingQueue[Token]
     offset      : int
     string_db   : &StringDatabase
+    indent      := 0
+    do_stack    := Array[int].new()
 
     // interned keywords
-    KwLambda   : string
-    KwReturn   : string
-    Kwfn       : string
-    KwFn       : string
-    KwStruct   : string
-    KwEnum     : string
-    KwImpl     : string
-    KwIf       : string
-    KwElse     : string
-    KwFor      : string
-    KwWhile    : string
-    KwLoop     : string
-    KwAnd      : string
-    KwOr       : string
-    KwTrue     : string
-    KwFalse    : string
-    KwNull     : string
-    KwUse    : string
-    KwDefer    : string
-    KwMatch    : string
-    KwBreak    : string
-    KwContinue : string
-    KwTrait    : string
-    KwCast     : string
-    KwConst    : string
-    KwDefault  : string
-    KwPub      : string
-    KwThen     : string
-    KwDo       : string
-    KwMut      : string
-    KwImport   : string
-    KwIn       : string
-    KwIs       : string
+    KwLambda    : string
+    KwReturn    : string
+    Kwfn        : string
+    KwFn        : string
+    KwStruct    : string
+    KwEnum      : string
+    KwImpl      : string
+    KwIf        : string
+    KwElse      : string
+    KwFor       : string
+    KwWhile     : string
+    KwLoop      : string
+    KwAnd       : string
+    KwOr        : string
+    KwTrue      : string
+    KwFalse     : string
+    KwNull      : string
+    KwUse       : string
+    KwDefer     : string
+    KwMatch     : string
+    KwBreak     : string
+    KwContinue  : string
+    KwTrait     : string
+    KwCast      : string
+    KwConst     : string
+    KwDefault   : string
+    KwPub       : string
+    KwThen      : string
+    KwDo        : string
+    KwMut       : string
+    KwImport    : string
+    KwIn        : string
+    KwIs        : string
 }
 
 impl TextProvider for Lexer {
@@ -76,7 +80,7 @@ impl Lexer {
                 column      = 1
             )
             offset          = 0
-            peek            = None
+            next_queue      = RingQueue[Token].new()
             string_db       = string_db
 
             KwLambda   = string_db.intern("lambda")
@@ -126,10 +130,15 @@ impl Lexer {
     }
 
     current_location :: (&Self) -> Location {
-        return match &peek {
-            Some($tok) -> tok.location
-            None -> location
+        if next_queue.count() > 0 {
+            return next_queue.peek().location
+        } else {
+            return self.location
         }
+    }
+
+    push_indent :: (&mut Self) {
+        self.do_stack.push(self.indent)
     }
 
     expect_token :: (&mut Self, typ: TokenType) -> bool, Token {
@@ -142,39 +151,19 @@ impl Lexer {
     }
 
     peek_token :: (&mut Self) -> &Token {
-        return match &peek {
-            Some($tok) -> tok
-
-            None -> {
-                tok := next_token()
-                peek = Some(tok)
-                &peek.Some
-            }
+        if self.next_queue.count() == 0 {
+            self.advance()
         }
+        @assert(self.next_queue.count() > 0)
+        return self.next_queue.peek()
     }
 
     next_token :: (&mut Self) -> Token {
-        match peek {
-            Some($t) -> {
-                peek = None
-                return t
-            }
+        if self.next_queue.count() == 0 {
+            self.advance()
         }
-
-        match skip_newlines_and_comments() {
-            Some($loc) -> {
-                t := Token(
-                    typ = TokenType.NewLine
-                    location = loc
-                    suffix = None
-                    data = TokenData.None
-                )
-                return t
-            }
-        }
-
-        t := read_token()
-        return t
+        @assert(self.next_queue.count() > 0)
+        return self.next_queue.pop()
     }
 
     skip_whitespace :: (&mut Self) {
@@ -208,7 +197,9 @@ impl Lexer {
         }
     }
 
-    read_token :: (&mut Self) -> Token {
+    advance :: (&mut Self) {
+        skip_newlines_and_comments()
+
         mut token := Token(
             typ      = TokenType.EOF
             data     = TokenData.None
@@ -219,7 +210,10 @@ impl Lexer {
         token.location.byte_length = 0
 
         if location.byte_index - offset >= text.bytes.length {
-            return token
+            if next_queue.count() == 0 or next_queue.peek_last().typ != .EOF {
+                next_queue.push(token)
+            }
+            return
         }
 
         curr, curr_len := {
@@ -320,7 +314,7 @@ impl Lexer {
         token.location.end_column  = location.column
         token.location.end_line    = location.line
 
-        return token
+        next_queue.push(token)
     }
 
     parse_number_literal :: (&mut Self, token: &mut Token) {
@@ -626,9 +620,9 @@ impl Lexer {
         token.data = TokenData.String(string_db.intern(str))
     }
 
-    skip_newlines_and_comments :: (&mut Self) -> loc: Option[Location] {
-        loc = None
-
+    skip_newlines_and_comments :: (&mut Self) {
+        mut emit_newline_token := false
+        mut new_indent := self.indent
         while location.byte_index - offset < text.bytes.length {
             curr, curr_len := peek_char(0)
             next, next_len := peek_char(1)
@@ -644,16 +638,51 @@ impl Lexer {
                 location.byte_index += int(curr_len)
                 location.column += 1
             } else if curr == '`n' {
-                match loc {
-                    None -> {
-                        loc = Some(location)
-                    }
-                }
+                new_indent = -1
+                emit_newline_token = true
 
                 location.line += 1
                 location.byte_index += int(curr_len)
                 location.column = 1
             } else {
+                if new_indent == -1 {
+                    new_indent = (self.location.column - 1) / 4
+                    // io.formatln("{}, indent = {} -> {}", [self.location, self.indent, new_indent])
+
+                    while self.indent < new_indent {
+                        if do_stack.count() > 0 and *do_stack.peek_last() == self.indent {
+                            self.next_queue.push(Token(
+                                typ      = .OpenBrace
+                                location = location
+                                suffix   = .None
+                                data     = .None
+                            ))
+                        }
+                        self.indent += 1
+                    }
+                    while self.indent > new_indent {
+                        self.indent -= 1
+                        if do_stack.count() > 0 and *do_stack.peek_last() == self.indent {
+                            self.next_queue.push(Token(
+                                typ      = .ClosingBrace
+                                location = location
+                                suffix   = .None
+                                data     = .None
+                            ))
+                            do_stack.pop()
+                        }
+                    }
+
+                    self.indent = new_indent
+                }
+                if emit_newline_token {
+                    next_queue.push(Token(
+                        typ      = TokenType.NewLine
+                        location = location
+                        suffix   = None
+                        data     = TokenData.None
+                    ))
+                }
                 break
             }
         }
@@ -744,11 +773,11 @@ impl Lexer {
                     else if string.same(str, KwDefault)    then TokenType.KwDefault
                     else if string.same(str, KwPub)        then TokenType.KwPub
                     else if string.same(str, KwThen)       then TokenType.KwThen
-                    else if string.same(str, KwDo)         then TokenType.KwDo
                     else if string.same(str, KwMut)        then TokenType.KwMut
                     else if string.same(str, KwImport)     then TokenType.KwImport
                     else if string.same(str, KwIn)         then TokenType.KwIn
                     else if string.same(str, KwIs)         then TokenType.KwIs
+                    else if string.same(str, KwDo)         then TokenType.KwDo
                     else token.typ
             }
         }
