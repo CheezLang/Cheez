@@ -3,33 +3,33 @@ io :: std.IO
 
 _ :: Main()
 Main :: () {
-    foo(5, 2)
+    mut foo := Foo(0)
+    Foo.a()
+    foo.b()
+    foo.c()
+    foo.d()
+    io.print_int(foo.v)
 }
 
-foo :: (a: int, b: int) {
-    baz()
-    bar()
-    std.IO.print_int(a / b)
-    if true {
-        if true {
-            io.print_string("lol")
-        }
-    }
-    if true do
-        if true do
-            io.print_string("lol2")
+Foo :: struct {
+    v : int
 }
 
-bar :: () {
-    arr : [6]int
-    io.print_int(arr[1])
+impl Foo {
+    pub a :: () do io.print_string("a()")
+
+    pub b :: (mut self: Foo) do
+        io.print_string("b()")
+        io.print_int(self.v)
+        self.v = self.v + 1
+
+    pub c :: (self: &Foo) do
+        io.print_string("c()")
+        io.print_int(self.v)
+        // self.v = self.v + 1
+
+    pub d :: (self: &mut Foo) do
+        io.print_string("d()")
+        io.print_int(self.v)
+        self.v = self.v + 1
 }
-
-baz :: () -> int {
-    return 5
-}
-
-baz2 :: () -> int do
-    return 5
-
-baz3 :: () -> int do return 5

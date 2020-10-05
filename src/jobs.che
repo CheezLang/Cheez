@@ -481,6 +481,7 @@ impl CompileNode {
             .NativeFunc($func) -> cast func.function_type, Value.NativeFunc(*func)
 
             $sym -> {
+                g_logger.log("get_type_and_value_of_symbol({}): not implemented", [symbol])
                 @assert(false, "Should not happen?")
                 null, Value.None
             }
@@ -553,157 +554,7 @@ impl CompileNode {
             }
 
             TypeInfoStruct($ti) -> {
-                // wait_until(ti.members != null, {
-                //     // @todo: report error? i dont think its necessary here
-                // })
-
-                match workspace.get_struct_ast(ti) {
-                    Some($ast) -> wait_until(ast.members_done, {
-                        // nothing to see here...
-                    })
-                }
-
-                // check if member with this name exists
-                mut member : ^TypeInfoStructMember = null
-                for(by_ref=true) mem in ti.members {
-                    if mem.name == name {
-                        member = mem
-                        break
-                    }
-                }
-
-                if member != null {
-                    dot.typ = member.typ
-                    dot.symbol = .StructMember(member)
-                    if dot.sub.has_flags(.LValue) then AstNode.set_flags(dot, .LValue)
-                    return dot
-                }
-
-                // check if function is in typeinfo
-                mut func : ^TypeInfoImplFunction = null
-                for(by_ref=true) ti.impl_funcs {
-                    if it.name == name {
-                        func = ^*it
-                        break
-                    }
-                }
-
-                if func != null {
-                    match workspace.get_native_function_wrapper(cast func.typ) {
-                        Some($wrapper) -> {
-                            return compile_node(&*workspace.new_ast(AstUfc(
-                                id          = -1
-                                location    = dot.location
-                                scope       = dot.scope
-                                typ         = func.typ
-                                value_expr  = &*original_sub
-                                symbol      = .NativeFunc2(wrapper)
-                                value       = .NativeFunc2(wrapper, func.pointer)
-                            )), ctx)
-                        }
-
-                        None -> {
-                            workspace.error_handler.report_error_at(
-                                dot.name.location,
-                                "Can't call native function '{}' because no wrapper is available for type '{}'",
-                                [name, func.typ])
-                            poison(dot)
-                            return dot
-                        }
-                    }
-                }
-                
-                // search for function in impl blocks
-                mut symbol : Option[Symbol] = None
-
-                // @TODO: somehow get symbol of type
-                // match AstNode.get_original_symbol(&*dot.sub) {
-                //     Some($original_symbol) -> match original_symbol {
-                //         .OriginalNode($node) -> {
-                //             symbol = node.scope.get_impl_symbol(dot.sub_type, dot.name.name)
-                //         }
-
-                //         _ -> @assert(false)
-                //     }
-                //     None -> {}
-                // }
-
-                if symbol == .None {
-                    symbol = dot.scope.get_impl_symbol(dot.sub_type, dot.name.name)
-                }
-
-                match &symbol {
-                    Some($symbol) -> {
-                        dot.original_symbol = Some(*symbol)
-                        dot.typ, dot.value = get_type_and_value_of_symbol(symbol)
-
-                        if dot.value == .Poison {
-                            poison(dot)
-                            return dot
-                        }
-
-                        func_type := match dot.typ {
-                            TypeInfoFunction($ti_func) -> ti_func
-                            _ -> {
-                                workspace.error_handler.report_error_at(dot.name.location, "'{}' is not a function but '{}'", [dot.name.name, dot.typ])
-                                poison(dot)
-                                return dot
-                            }
-                        }
-
-                        if func_type.param_types.length == 0 {
-                            workspace.error_handler.report_error_at(dot.name.location, "Impl function '{}' has no self parameter. Type is '{}'", [dot.name.name, dot.typ])
-                            poison(dot)
-                            return dot
-                        }
-
-                        self_param_type := *func_type.param_types[0]
-
-                        match self_param_type {
-                            $ti if ti == dot.sub.typ -> {
-                                // ok, nothing to do
-                            }
-                            TypeInfoReference($ti) -> {
-                                if dot.address_mode == .Value {
-                                    original_sub = workspace.new_ast(AstUnary(
-                                        id          = -1
-                                        location    = original_sub.location
-                                        scope       = original_sub.scope
-                                        sub         = &*original_sub
-                                        operator    = if ti.is_mut then .RefMut else .Ref
-                                    ))
-                                }
-                            }
-                            _ -> {
-                                if dot.address_mode == .Address {
-                                    original_sub = workspace.new_ast(AstUnary(
-                                        id          = -1
-                                        location    = original_sub.location
-                                        scope       = original_sub.scope
-                                        sub         = &*original_sub
-                                        operator    = .Deref
-                                    ))
-                                }
-                            }
-                        }
-
-                        return compile_node(&*workspace.new_ast(AstUfc(
-                            id          = -1
-                            location    = dot.location
-                            scope       = dot.scope
-                            typ         = dot.typ
-                            value_expr  = &*original_sub
-                            symbol      = *symbol
-                            value       = dot.value
-                        )), ctx)
-                    }
-
-                    None -> {}
-                }
-
-                workspace.error_handler.report_error_at(dot.name.location, "Struct '{}' has no member or function '{}'", [ti.name, name])
-                poison(dot)
-                return dot
+                return self.compile_dot_struct(dot, original_sub, &*ti, ctx)
             }
 
             TypeInfoType($ti) -> {
@@ -713,7 +564,7 @@ impl CompileNode {
                 match AstNode.get_original_symbol(&*dot.sub) {
                     Some($original_symbol) -> match original_symbol {
                         .OriginalNode($node) -> {
-                            symbol = node.scope.get_impl_symbol(typ, dot.name.name)
+                            symbol = node.scope.get_impl_symbol(typ, dot.name.name, only_public = !is_in_impl_for_type(&*typ))
                         }
 
                         _ -> @assert(false)
@@ -722,11 +573,21 @@ impl CompileNode {
                 }
 
                 if symbol == .None {
-                    symbol = dot.scope.get_impl_symbol(typ, dot.name.name)
+                    symbol = dot.scope.get_impl_symbol(typ, dot.name.name, only_public = !is_in_impl_for_type(&*typ))
                 }
 
                 match &symbol {
                     Some($symbol) -> {
+                        match symbol {
+                            .Private($decl) -> {
+                                workspace.error_handler.report_error_at(dot.name.location, "'{}.{}' is not public and thus not accessible from here", [typ, dot.name.name], details=[
+                                    ("{}.{} defined at {}", [typ, dot.name.name, decl.location])
+                                ])
+                                poison(dot)
+                                return dot
+                            }
+                            _ -> {}
+                        }
                         dot.original_symbol = Some(*symbol)
                         dot.typ, dot.value = get_type_and_value_of_symbol(symbol)
                     }
@@ -761,6 +622,178 @@ impl CompileNode {
             }
         }
 
+        return dot
+    }
+
+    compile_dot_struct :: (&mut Self, dot: &mut AstDot, original_sub: ^mut AstNode, typ: &TypeInfoStruct, ctx: CNContext) -> &mut AstNode {
+        mut new_sub := original_sub
+        AstNode.set_flags(dot.name, .OnlyPubDeclarations)
+        // wait_until(typ.members != null, {
+        //     // @todo: report error? i dont think its necessary here
+        // })
+
+        match workspace.get_struct_ast(typ) {
+            Some($ast) -> wait_until(ast.members_done, {
+                // nothing to see here...
+            })
+        }
+
+        // check if member with this name exists
+        mut member : ^TypeInfoStructMember = null
+        for(by_ref=true) mem in typ.members {
+            if mem.name == dot.name.name {
+                member = mem
+                break
+            }
+        }
+
+        if member != null {
+            dot.typ = member.typ
+            dot.symbol = .StructMember(member)
+            if dot.sub.has_flags(.LValue) then AstNode.set_flags(dot, .LValue)
+            return dot
+        }
+
+        // check if function is in typeinfo
+        // this is for functions supplied by the compiler
+        {
+            mut func : ^TypeInfoImplFunction = null
+            for &it in typ.impl_funcs {
+                if it.name == dot.name.name {
+                    func = ^*it
+                    break
+                }
+            }
+
+            if func != null {
+                match workspace.get_native_function_wrapper(cast func.typ) {
+                    Some($wrapper) -> {
+                        return compile_node(&*workspace.new_ast(AstUfc(
+                            id          = -1
+                            location    = dot.location
+                            scope       = dot.scope
+                            typ         = func.typ
+                            value_expr  = &*new_sub
+                            symbol      = .NativeFunc2(wrapper)
+                            value       = .NativeFunc2(wrapper, func.pointer)
+                        )), ctx)
+                    }
+    
+                    None -> {
+                        workspace.error_handler.report_error_at(
+                            dot.name.location,
+                            "Can't call native function '{}' because no wrapper is available for type '{}'",
+                            [dot.name.name, func.typ])
+                        poison(dot)
+                        return dot
+                    }
+                }
+            }
+        }
+
+        // search for function in impl blocks
+        mut symbol : Option[Symbol] = None
+
+        // @TODO: somehow get symbol of type
+        // match AstNode.get_original_symbol(&*dot.sub) {
+        //     Some($original_symbol) -> match original_symbol {
+        //         .OriginalNode($node) -> {
+        //             symbol = node.scope.get_impl_symbol(dot.sub_type, dot.name.name, only_public = !is_in_impl_for_type(typ))
+        //         }
+
+        //         _ -> @assert(false)
+        //     }
+        //     None -> {}
+        // }
+
+        if symbol == .None {
+            symbol = dot.scope.get_impl_symbol(dot.sub_type, dot.name.name, only_public = !is_in_impl_for_type(typ))
+        }
+
+        match &symbol {
+            Some($symbol) -> {
+                match symbol {
+                    .Private($decl) -> {
+                        workspace.error_handler.report_error_at(dot.name.location, "'{}.{}' is not public and thus not accessible from here", [typ, dot.name.name], details=[
+                            ("{}.{} defined at {}", [typ, dot.name.name, decl.location])
+                        ])
+                        poison(dot)
+                        return dot
+                    }
+                    _ -> {}
+                }
+
+                dot.original_symbol = Some(*symbol)
+                dot.typ, dot.value = get_type_and_value_of_symbol(symbol)
+
+                if dot.value == .Poison {
+                    poison(dot)
+                    return dot
+                }
+
+                func_type := match dot.typ {
+                    TypeInfoFunction($typ_func) -> typ_func
+                    _ -> {
+                        workspace.error_handler.report_error_at(dot.name.location, "'{}' is not a function but '{}'", [dot.name.name, dot.typ])
+                        poison(dot)
+                        return dot
+                    }
+                }
+
+                if func_type.param_types.length == 0 {
+                    workspace.error_handler.report_error_at(dot.name.location, "Impl function '{}' has no self parameter. Type is '{}'", [dot.name.name, dot.typ])
+                    poison(dot)
+                    return dot
+                }
+
+                self_param_type := *func_type.param_types[0]
+
+                match self_param_type {
+                    $typ if typ == dot.sub.typ -> {
+                        // ok, nothing to do
+                    }
+                    TypeInfoReference($typ) -> {
+                        if dot.address_mode == .Value {
+                            // left side of dot is a value but functions expects a reference, so create a reference
+                            new_sub = workspace.new_ast(AstUnary(
+                                id          = -1
+                                location    = new_sub.location
+                                scope       = new_sub.scope
+                                sub         = &*new_sub
+                                operator    = if typ.is_mut then .RefMut else .Ref
+                            ))
+                        }
+                    }
+                    _ -> {
+                        if dot.address_mode == .Address {
+                            // left side of dot is a reference/pointer but functions takes parameter by value, so create a deref
+                            new_sub = workspace.new_ast(AstUnary(
+                                id          = -1
+                                location    = new_sub.location
+                                scope       = new_sub.scope
+                                sub         = &*new_sub
+                                operator    = .Deref
+                            ))
+                        }
+                    }
+                }
+
+                return compile_node(&*workspace.new_ast(AstUfc(
+                    id          = -1
+                    location    = dot.location
+                    scope       = dot.scope
+                    typ         = dot.typ
+                    value_expr  = &*new_sub
+                    symbol      = *symbol
+                    value       = dot.value
+                )), ctx)
+            }
+
+            None -> {}
+        }
+
+        workspace.error_handler.report_error_at(dot.name.location, "Struct '{}' has no member or function '{}'", [typ.name, dot.name.name])
+        poison(dot)
         return dot
     }
 
@@ -1414,6 +1447,7 @@ impl CompileNode {
 
                         match decl.value_expr {
                             AstFunction($func) -> {
+                                func.impl_block = ^*ctx[0]
                                 ctx[0].functions.add(func)
                             }
 
@@ -2537,6 +2571,11 @@ impl CompileNode {
         }
 
         return Err()
+    }
+
+
+    is_in_impl_for_type :: (&Self, typ: &TypeInfo) -> bool {
+        return self.function != null and self.function.impl_block != null and TypeInfo.same(self.function.impl_block.target_expr.value.as_type(), ^*typ)
     }
 }
 

@@ -130,8 +130,20 @@ impl Scope {
         return Ok()
     }
 
-    get_symbol_local :: (&Self, name: string) -> Option[&mut Symbol] {
-        return symbols.get(name)
+    get_symbol_local :: (&Self, name: string, only_public: bool = false) -> Option[Symbol] {
+        result := symbols.get(name)
+        return match result {
+            None -> None
+            Some($symbol) -> if only_public {
+                match symbol {
+                    .Decl($decl) if !(*decl).public -> Some(Symbol.Private(*decl))
+                    .ConstDecl($decl) if !(*decl).public -> Some(Symbol.Private(*decl))
+                    $symbol -> Some(*symbol)
+                }
+            } else {
+                Some(*symbol)
+            }
+        }
     }
 
     get_symbol :: (&Self, name: string, only_public: bool = false) -> Symbol {
@@ -180,7 +192,7 @@ impl Scope {
         }
     }
 
-    get_impl_symbol :: (&mut Self, typ: ^TypeInfo, name: string) -> Option[Symbol] {
+    get_impl_symbol :: (&mut Self, typ: ^TypeInfo, name: string, only_public: bool) -> Option[Symbol] {
         mut scope := ^*self
         while scope != null #label outer_loop {
             match &scope.impls {
@@ -193,9 +205,9 @@ impl Scope {
 
                         if !typ.matches_pattern(imp.target_expr.value.as_type()) then continue
 
-                        match imp.sub_scope.get_symbol_local(name) {
+                        match imp.sub_scope.get_symbol_local(name, only_public) {
                             Some($symbol) -> {
-                                return Some(*symbol)
+                                return Some(symbol)
                             }
 
                             None -> {}

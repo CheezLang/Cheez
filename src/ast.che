@@ -12,19 +12,30 @@ use import value
 
 AstNodeFlags :: enum #flags {
     None
+
+    /// If `LValue` is set then the address of the expression can be taken without creating a temporary variable
     LValue
+
+    /// If `IsDefinedInScope` is set then the declaration was already defined in it's scope. Only applicable for declarations
     IsDefinedInScope
+
+    /// If `AllowPubModifier` is set the the declaration can be annotated with the `pub` modifier. Only applicable for declarations
     AllowPubModifier
+
+    /// If `OnlyPubDeclarations` is set then an identifier can only use public declarations from a scope. Only applicable for identifiers
     OnlyPubDeclarations
 }
 
+/// Describes whether an expression is a value or a reference/pointer to a value
 AddressMode :: enum #copy {
     NotSet
+
+    /// The expression is either a reference or pointer to a value
     Address
+
+    /// The expression is a value, not a pointer or reference
     Value
 }
-
-__uiaeuiaeuiae := @type_info(AstNodeFlags)
 
 AstNode :: trait {
     id       : int = -1
@@ -150,6 +161,8 @@ AstFunction :: struct AstNode {
     param_scope         : ^mut Scope
     name                := "#anonymous"
     return_type         : ^TypeInfo = null
+
+    impl_block          : ^AstImpl = null
 
     bytecode            : ^mut CBCFunction = null
 }
@@ -319,11 +332,21 @@ AstArrayType :: struct AstNode {
 impl AstNode for AstArrayType {}
 
 AstDot :: struct AstNode {
+    /// left side of `.` - can be null
     sub     : ^mut AstNode
     name    : &mut AstIdentifier
 
+    /// The symbol this expression refers to
     symbol  := Symbol.NotFound
     original_symbol := Option[Symbol].None
+
+    /// type of expression on left side of `.` but with reference/pointer removed
+    ///*
+        5.foo // sub_type is int
+
+        x : &String
+        x.length // sub_type is String
+    //*/
     sub_type        : ^TypeInfo = null
     address_mode    := AddressMode.NotSet
 }
