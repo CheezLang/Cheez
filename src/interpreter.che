@@ -30,7 +30,7 @@ CodeRunner :: trait {
 }
 
 DefaultCodeRunner :: struct CodeRunner {
-
+    _ := 0
 }
 
 impl CodeRunner for DefaultCodeRunner {
