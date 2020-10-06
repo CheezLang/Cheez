@@ -879,7 +879,7 @@ impl Variable {
                 }
             }
 
-            TypeInfoStruct($ti) -> ti.name.to_owned()
+            TypeInfoStruct($ti) -> fmt.format("{}", [any_value]) // ti.name.to_owned()
             TypeInfoTrait($ti) -> ti.name.to_owned()
 
             _ -> fmt.format("{:?}", [any_value])

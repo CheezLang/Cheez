@@ -3,7 +3,7 @@ io :: std.IO
 
 _ :: Main()
 Main :: () {
-    mut foo := Foo(0)
+    mut foo := Foo(5)
     Foo.a()
     foo.b()
     foo.c()
