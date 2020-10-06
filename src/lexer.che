@@ -17,6 +17,7 @@ io :: import std.io
 Lexer :: struct {
     text        : string
     location    : Location
+    last_token_location : Location
     next_queue  : RingQueue[Token]
     offset      : int
     string_db   : &StringDatabase
@@ -79,6 +80,13 @@ impl Lexer {
                 line        = 1
                 column      = 1
             )
+            last_token_location = Location(
+                file = "string"
+                byte_index  = 0
+                byte_length = 1
+                line        = 1
+                column      = 1
+            )
             offset          = 0
             next_queue      = RingQueue[Token].new()
             string_db       = string_db
@@ -126,6 +134,7 @@ impl Lexer {
         }
         l := Lexer.from_string(content.slice(), string_db)
         l.get_mut().location.file = filename
+        l.get_mut().last_token_location.file = filename
         return Ok(l)
     }
 
@@ -148,6 +157,11 @@ impl Lexer {
         } else {
             return false, token
         }
+    }
+
+    enqueue_token :: (&mut Self, token: Token) {
+        self.last_token_location = token.location
+        self.next_queue.push(token)
     }
 
     peek_token :: (&mut Self) -> &Token {
@@ -199,7 +213,7 @@ impl Lexer {
 
         if location.byte_index - offset >= text.bytes.length {
             if next_queue.count() == 0 or next_queue.peek_last().typ != .EOF {
-                next_queue.push(token)
+                self.enqueue_token(token)
             }
             return
         }
@@ -302,7 +316,7 @@ impl Lexer {
         token.location.end_column  = location.column
         token.location.end_line    = location.line
 
-        next_queue.push(token)
+        self.enqueue_token(token)
     }
 
     parse_number_literal :: (&mut Self, token: &mut Token) {
@@ -620,43 +634,43 @@ impl Lexer {
             } else if curr == '/' and next == '/' {
                 parse_single_line_comment()
             } else if curr == ' ' or curr == '`t' {
-                location.byte_index += int(curr_len)
-                location.column += 1
+                self.location.byte_index += int(curr_len)
+                self.location.column += 1
             } else if curr == '`r' {
-                location.byte_index += int(curr_len)
-                location.column += 1
+                self.location.byte_index += int(curr_len)
+                self.location.column += 1
             } else if curr == '`n' {
                 new_indent = -1
-                location.line += 1
-                location.byte_index += int(curr_len)
-                location.column = 1
-                newline_pos = Some(location)
+                self.location.line += 1
+                self.location.byte_index += int(curr_len)
+                self.location.column = 1
+                newline_pos = Some(self.location)
 
             } else {
                 if new_indent == -1 {
                     new_indent = (self.location.column - 1) / 4
 
                     if do_stack.count() > 0 and do_stack.peek_last().indent == self.indent and new_indent <= self.indent {
-                        self.next_queue.push(Token(
+                        self.enqueue_token(Token(
                             typ      = .Error
                             location = self.location
                             data     = .String("Missing indentation")
                         ))
-                        self.next_queue.push(Token(
+                        self.enqueue_token(Token(
                             typ      = .OpenBrace
-                            location = location
+                            location = self.location
                         ))
-                        self.next_queue.push(Token(
+                        self.enqueue_token(Token(
                             typ      = .ClosingBrace
-                            location = location
+                            location = self.location
                         ))
                         do_stack.pop()
                     } else {
                         while self.indent < new_indent {
                             if do_stack.count() > 0 and do_stack.peek_last().indent == self.indent {
-                                self.next_queue.push(Token(
+                                self.enqueue_token(Token(
                                     typ      = .OpenBrace
-                                    location = location
+                                    location = self.last_token_location.end()
                                 ))
                             }
                             self.indent += 1
@@ -664,9 +678,9 @@ impl Lexer {
                         while self.indent > new_indent {
                             self.indent -= 1
                             if do_stack.count() > 0 and do_stack.peek_last().indent == self.indent {
-                                self.next_queue.push(Token(
+                                self.enqueue_token(Token(
                                     typ      = .ClosingBrace
-                                    location = location
+                                    location = self.last_token_location.end()
                                 ))
                                 do_stack.pop()
                             }
@@ -676,7 +690,7 @@ impl Lexer {
                     self.indent = new_indent
                 }
                 match newline_pos {
-                    Some($loc) -> next_queue.push(Token(
+                    Some($loc) -> self.enqueue_token(Token(
                         typ      = .NewLine
                         location = loc
                     ))
@@ -689,7 +703,7 @@ impl Lexer {
     }
 
     peek_char :: (&Self, mut offset: int) -> char, i32 {
-        mut index := location.byte_index - self.offset
+        mut index := self.location.byte_index - self.offset
         while offset > 0, offset -= 1 {
             _, len := Utf8.decode(text.slice().bytes[index..text.bytes.length])
             index += int(len)
@@ -703,41 +717,41 @@ impl Lexer {
 
     parse_multi_line_comment :: (&mut Self) {
         mut level := 0
-        while location.byte_index - offset < text.bytes.length {
+        while self.location.byte_index - offset < text.bytes.length {
             curr, curr_len := peek_char(0)
             next, next_len := peek_char(1)
 
             if curr == '/' and next == '*' {
-                location.byte_index += int(next_len)
-                location.column += 1
+                self.location.byte_index += int(next_len)
+                self.location.column += 1
                 level += 1
             } else if curr == '*' and next == '/' {
-                location.byte_index += int(next_len)
-                location.column += 1
+                self.location.byte_index += int(next_len)
+                self.location.column += 1
                 level -= 1
 
                 if level == 0 {
                     break
                 }
             } else if curr == '\n' {
-                location.line += 1
-                location.column = 1
+                self.location.line += 1
+                self.location.column = 1
             }
 
-            location.byte_index += int(curr_len)
-            location.column += 1
+            self.location.byte_index += int(curr_len)
+            self.location.column += 1
         }
     }
 
     parse_single_line_comment :: (&mut Self) {
-        while location.byte_index - offset < text.bytes.length {
+        while self.location.byte_index - offset < text.bytes.length {
             next, len := peek_char(0)
             if next == '`n' {
                 break
             }
 
-            location.byte_index += int(len)
-            location.column += 1
+            self.location.byte_index += int(len)
+            self.location.column += 1
         }
     }
 
@@ -808,6 +822,18 @@ impl Location {
         )
     }
 
+    beginning :: (Self) -> Location {
+        return Location(
+            file        = file
+            byte_index  = byte_index
+            byte_length = 0
+            line        = line
+            column      = column
+            end_column  = column
+            end_line    = line
+        )
+    }
+
     end :: (Self) -> Location {
         return Location(
             file        = file
@@ -818,6 +844,12 @@ impl Location {
             end_column  = end_column
             end_line    = end_line
         )
+    }
+
+    with_line :: (Self, line: int) -> Location {
+        mut result := self
+        result.line = line
+        return result
     }
 }
 

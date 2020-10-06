@@ -87,7 +87,7 @@ impl CodeGenerator for ByteCodeGenerator {
         cbc_func.parameter_slots = -slot_index
 
         generate_expression(&*func.body)
-        builder.set_location(func.body.location.end())
+        builder.set_location(func.body.location.end().with_line(-1))
         builder.build_return_void()
 
         builder.end_function()
@@ -577,17 +577,22 @@ impl CodeGenerator for ByteCodeGenerator {
 
     generate_block :: (&mut Self, block: &AstBlock) {
         builder.set_location(block.location)
-        for child in &block.children {
-            generate_expression(&**child)
+
+        mut last_expr_line := block.location.line
+        for child in block.children.slice() {
+            generate_expression(&*child)
 
             // pop value if not last and type is not void
             if it_index < block.children.count() - 1 and child.typ != @type_info(void) {
                 builder.build_pop(slots_for_size(child.typ.size))
             }
+            last_expr_line = child.location.end().line
         }
 
-        builder.set_location(block.location.end())
-        builder.build_noop()
+        if block.location.end().line != last_expr_line {
+            builder.set_location(block.location.end())
+            builder.build_noop()
+        }
     }
 
     generate_cast :: (&mut Self, cst: &AstCast) {

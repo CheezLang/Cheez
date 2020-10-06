@@ -50,7 +50,7 @@ Main :: () {
 
     fs.create_directory(fs.Path.get_containing_directory(log_path.slice()))
     logger := FileLogger.new(log_path.slice())
-    // g_logger = cast ^logger.get()
+
     {
         l : ^mut Logger = ^*logger.get_mut()
         Logger.set_global_logger(l)
@@ -235,7 +235,7 @@ impl CodeRunner for Debugger {
                     break
                 }
 
-                do_break := match &self.break_cond {
+                do_break := location.line >= 0 and match &self.break_cond {
                     .None    -> false
                     .Step    -> interp.fp < fp_old or (frame.func == old_frame.func and location.line != line_break)
                     .StepIn  -> interp.fp != fp_old or (frame.func == old_frame.func and location.line != line_break)
@@ -322,6 +322,17 @@ print_string :: (interp: ^Interpreter) {
         g_debug_adapter.adapter.emit_output_event(g_print_buffer.clone(), "console")
         g_print_buffer.clear()
     }
+}
+
+print_char :: (interp: ^Interpreter) {
+    if g_print_buffer == null {
+        g_print_buffer = mem.alloc(String)
+        *g_print_buffer = String.empty()
+    }
+
+    frame := interp.top_frame()
+    msg := fmt.format("{}", [frame.get_arg(0, char)])
+    *g_print_buffer += &msg
 }
 
 debug_break :: (interp: ^Interpreter) {
@@ -412,6 +423,10 @@ impl CheezDebugAdapter {
             "_print",
             Symbol.NativeFunc(NativeFunctionWrapper.new(cast(NativeFunction) print_string, fn(string)))
         ))
+        compiler.get().user_defined_builtins.add((
+            "_print_char",
+            Symbol.NativeFunc(NativeFunctionWrapper.new(cast(NativeFunction) print_char, fn(char)))
+        ))
 
         compiler.get_mut().user_defined_builtins.add((
             "_debugbreak",
@@ -435,12 +450,14 @@ impl ErrorHandler for CheezDebugAdapter {
 
     report_error_at :: (&Self, location: Location, message: string, args: []^any, prefix: string = "", details: [](fmt: string, args: []^any) = []) {
         msg := fmt.format(message, args)
-        g_logger.log("[Code Gen] {}: {}", [location, msg])
+        g_logger.log("[ERROR] {}: {}", [location, msg.slice()])
+        self.adapter.emit_output_event(fmt.format("[ERROR] {}: {}", [location, msg.slice()]), "stderr")
     }
 
     report_error :: (&Self, message: string, args: []^any, prefix: string = "", details: [](fmt: string, args: []^any) = []) {
         msg := fmt.format(message, args)
-        g_logger.log("[Code Gen] {}", [msg])
+        g_logger.log("[ERROR] {}", [msg.slice()])
+        self.adapter.emit_output_event(fmt.format("[ERROR] {}", [msg.slice()]), "stderr")
     }
 }
 
