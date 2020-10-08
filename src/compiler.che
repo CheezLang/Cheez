@@ -848,6 +848,7 @@ impl Compiler {
             fiber := self.waiting_fibers.pop()
             self.ready_fibers.push(fiber)
         }
+        self.is_idle = false
     }
 
     thread_func :: (&mut Self) {

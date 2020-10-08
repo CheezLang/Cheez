@@ -464,14 +464,6 @@ impl LexerInputStream for StdioInputStream {
 }
 
 command_repl :: (options: ^CommandRepl) {
-    DEBUG_INTERPRETER = options.debug_interpreter
-    DEBUG_JOBS        = options.debug_jobs
-    DEBUG_PARSER      = options.debug_parser
-    DEBUG_WAIT        = options.debug_wait
-    DUMP_AST          = options.dump_ast
-    PRINT_AST         = options.print_ast
-    PRINT_TYPED_AST   = options.print_typed_ast
-
     mut console_error_handler := ConsoleErrorHandler.new(null)
 
     if options.thread_count < 1 or options.thread_count > 32 {
@@ -557,6 +549,16 @@ command_repl :: (options: ^CommandRepl) {
     add_text(compiler.get_mut(), main_workspace.get_mut(), stream.get_mut(), "std :: import `"std.cheez`"`n")
 
     main_workspace.get_mut().create_and_add_job(ReplJob.new(stream.clone().change_type(LexerInputStream)))
+    compiler.get_mut().flush_waiting_fibers()
+    compiler.get_mut().wait_idle()
+
+    DEBUG_INTERPRETER = options.debug_interpreter
+    DEBUG_JOBS        = options.debug_jobs
+    DEBUG_PARSER      = options.debug_parser
+    DEBUG_WAIT        = options.debug_wait
+    DUMP_AST          = options.dump_ast
+    PRINT_AST         = options.print_ast
+    PRINT_TYPED_AST   = options.print_typed_ast
 
     loop {
         io.print("> ")
@@ -609,9 +611,7 @@ command_repl :: (options: ^CommandRepl) {
                 }
             } else {
                 add_text(compiler.get_mut(), main_workspace.get_mut(), stream.get_mut(), text)
-                // g_logger.log("wait idle")
                 compiler.get_mut().wait_idle()
-                // g_logger.log("idle")
             }
         }
     }

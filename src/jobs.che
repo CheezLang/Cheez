@@ -316,6 +316,13 @@ impl CompilationJob for EvaluateNodeJob {
                 location := frame.func.debug_info.get_location_for_ip(frame.ip)
                 workspace.error_handler.report_error_at(location, "{}", [msg], details = [("Stacktrace:`n{}", [stacktrace.slice()])])
             }
+
+            .Done -> {
+                frame := context.interp.top_frame()
+
+                value := Any.from_pointers(cast(^void) frame.stack.data, self.node.typ)
+                io.formatln("{}: {}", [value, self.node.typ])
+            }
         }
 
         debug_log("Done")
@@ -411,8 +418,9 @@ impl CompilationJob for ReplJob {
         debug_log("Begin")
 
         // todo: workspace.string_database must be protected in multi threading
-        lexer := Lexer.from_stream(self.stream.clone(), &workspace.string_database)
-        parser := Parser.new(lexer.get_mut(), workspace.error_handler, workspace.ast_allocator, workspace.next_ast_id)
+        mut lexer := Lexer.from_stream(self.stream.clone(), &workspace.string_database)
+        lexer.get_mut().repl_mode = true
+        mut parser := Parser.new(lexer.get_mut(), workspace.error_handler, workspace.ast_allocator, workspace.next_ast_id)
         workspace.next_ast_id += 0xFFFFFFFF // ?
 
         repl_scope := workspace.new_scope()

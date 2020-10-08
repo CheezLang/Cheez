@@ -73,6 +73,9 @@ impl Parser {
     }
 
     parse_expression :: (&Self, allow_comma: bool, allow_function: bool) -> ^mut AstNode {
+        debug_log("> {}: {}", [@function_signature(), lexer.peek_token()])
+        defer debug_log("< {}: {}", [@function_signature(), lexer.peek_token()])
+
         if check_token(.KwPub) {
             lexer.next_token()
             mutable := if check_token(.KwMut) {
@@ -149,6 +152,9 @@ impl Parser {
     }
 
     parse_declaration :: (&Self, public: bool, mutable: bool, allow_comma: bool, allow_function: bool) -> ^mut AstNode {
+        debug_log("> {}: {}", [@function_signature(), lexer.peek_token()])
+        defer debug_log("< {}: {}", [@function_signature(), lexer.peek_token()])
+
         pattern := try(parse_comma_expression(allow_comma, allow_function))
 
         consume(.Colon)
@@ -207,6 +213,9 @@ impl Parser {
     }
 
     parse_comma_expression :: (&Self, allow_comma: bool, allow_function: bool) -> ^mut AstNode {
+        debug_log("> {}: {}", [@function_signature(), lexer.peek_token()])
+        defer debug_log("< {}: {}", [@function_signature(), lexer.peek_token()])
+
         mut expr := parse_binary(allow_comma, allow_function)
 
         if allow_comma and check_token(.Comma) {
@@ -233,6 +242,9 @@ impl Parser {
     }
 
     parse_binary :: (&Self, allow_comma: bool, allow_function: bool, precedence: int = int.min, left_associative: bool = true) -> ^mut AstNode {
+        debug_log("> {}: {}", [@function_signature(), lexer.peek_token()])
+        defer debug_log("< {}: {}", [@function_signature(), lexer.peek_token()])
+
         mut expr := parse_unary(allow_comma, allow_function)
 
         loop {
@@ -296,6 +308,9 @@ impl Parser {
     }
 
     parse_unary :: (&Self, allow_comma: bool, allow_function: bool) -> ^mut AstNode {
+        debug_log("> {}: {}", [@function_signature(), lexer.peek_token()])
+        defer debug_log("< {}: {}", [@function_signature(), lexer.peek_token()])
+
         next := lexer.peek_token()
         match next.typ {
             .Minus -> {
@@ -370,7 +385,9 @@ impl Parser {
     }
 
     parse_post_unary :: (&Self, allow_comma: bool, allow_function: bool) -> ^mut AstNode {
-        debug_log("parse_post_unary")
+        debug_log("> {}: {}", [@function_signature(), lexer.peek_token()])
+        defer debug_log("< {}: {}", [@function_signature(), lexer.peek_token()])
+
         mut expr := try(parse_atomic_expression(allow_comma, allow_function))
 
         loop {
@@ -424,6 +441,9 @@ impl Parser {
     }
 
     parse_bracketed :: (&Self) -> ^mut AstNode {
+        debug_log("> {}: {}", [@function_signature(), lexer.peek_token()])
+        defer debug_log("< {}: {}", [@function_signature(), lexer.peek_token()])
+
         beg := consume(.OpenBracket).location
 
         values := Array[^mut AstNode].create()
@@ -478,6 +498,9 @@ impl Parser {
     }
 
     parse_block :: (&Self) -> ^mut AstNode {
+        debug_log("> {}: {}", [@function_signature(), lexer.peek_token()])
+        defer debug_log("< {}: {}", [@function_signature(), lexer.peek_token()])
+
         id := next_id()
 
         children := Array[^mut AstNode].create()
@@ -515,6 +538,9 @@ impl Parser {
     }
 
     parse_match :: (&Self, allow_comma: bool) -> ^mut AstNode {
+        debug_log("> {}: {}", [@function_signature(), lexer.peek_token()])
+        defer debug_log("< {}: {}", [@function_signature(), lexer.peek_token()])
+
         location := consume(.KwMatch).location
 
         self.skip_whitespace()
@@ -564,6 +590,9 @@ impl Parser {
     }
 
     parse_if :: (&Self, allow_comma: bool) -> ^mut AstNode {
+        debug_log("> {}: {}", [@function_signature(), lexer.peek_token()])
+        defer debug_log("< {}: {}", [@function_signature(), lexer.peek_token()])
+
         id := next_id()
 
         mut location := consume(.KwIf).location
@@ -614,6 +643,9 @@ impl Parser {
     }
 
     parse_loop :: (&Self, allow_comma: bool) -> ^mut AstNode {
+        debug_log("> {}: {}", [@function_signature(), lexer.peek_token()])
+        defer debug_log("< {}: {}", [@function_signature(), lexer.peek_token()])
+
         id := next_id()
         mut location := consume(.KwLoop).location
         body := parse_expression(allow_comma, false)
@@ -626,6 +658,9 @@ impl Parser {
     }
 
     parse_for :: (&Self, allow_comma: bool) -> ^mut AstNode {
+        debug_log("> {}: {}", [@function_signature(), lexer.peek_token()])
+        defer debug_log("< {}: {}", [@function_signature(), lexer.peek_token()])
+
         id := next_id()
 
         mut location := consume(.KwFor).location

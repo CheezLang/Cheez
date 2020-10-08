@@ -100,7 +100,6 @@ impl CodeGenerator for ByteCodeGenerator {
         cbc_func := self.allocate_function("$expr", file_path)
         builder.begin_function(cbc_func)
         generate_expression(node)
-        builder.build_store_stack(0, node.typ.size)
         builder.build_halt()
         builder.end_function()
         return cbc_func

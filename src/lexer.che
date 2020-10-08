@@ -67,6 +67,7 @@ Lexer :: struct {
     indent      := 0
     new_indent  := -1
     do_stack    := Array[(line: int, indent: int)].new()
+    repl_mode   := false
 
     // interned keywords
     KwLambda    : string
@@ -500,7 +501,6 @@ impl Lexer {
         // while location.byte_index - offset < text.bytes.length {
         loop {
             c, c_len := try_with(peek_char(0), break)
-            next, _  := try_with(peek_char(1), (char(0), i32(0)))
 
             match state {
                 Error -> break
@@ -527,9 +527,14 @@ impl Lexer {
                         str.resize(0)
                         state = B
                     }
-                    '.' if next != '.' -> {
-                        &str += c
-                        state = FloatPoint
+                    '.' -> {
+                        next, _ := try_with(peek_char(1), (char(0), i32(0)))
+                        if next == '.' {
+                            state = Done
+                        } else {
+                            &str += c
+                            state = FloatPoint
+                        }
                     }
                     $x if is_digit(x) -> {
                         &str += x
@@ -544,9 +549,14 @@ impl Lexer {
                 }
 
                 DecDigit -> match c {
-                    '.' if next != '.' -> {
-                        &str += c
-                        state = FloatPoint
+                    '.' -> {
+                        next, _ := try_with(peek_char(1), (char(0), i32(0)))
+                        if next == '.' {
+                            state = Done
+                        } else {
+                            &str += c
+                            state = FloatPoint
+                        }
                     }
                     '_' -> {
                         state = Dec_
@@ -798,13 +808,13 @@ impl Lexer {
 
                 '`t' -> {
                     self.location.byte_index += int(curr_len)
-                    self.location.column += 1
+                    self.location.column += 4
                     continue
                 }
 
-                '`n' -> {
-                    break
-                }
+                '`n' if !self.repl_mode or self.location.column > 1 -> break
+
+                _ -> {}
             }
 
             // non-whitespace character
