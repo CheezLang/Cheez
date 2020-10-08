@@ -4,6 +4,7 @@ use import std.mem.arena_allocator
 use import std.process
 use import std.string
 use import std.time
+use import std.rc
 
 C   :: import std.c
 fmt :: import std.fmt
@@ -387,11 +388,15 @@ command_build :: (options: ^CommandBuild) {
 
 dump_tokens :: (file: string) {
     string_db := StringDatabase.new()
+    
     match Lexer.from_file(file, &string_db) {
         Ok($lexer) -> {
             loop {
                 tok := lexer.get_mut().next_token()
                 io.formatln("{}", [tok])
+                if tok.typ == .KwDo {
+                    lexer.get_mut().push_indent()
+                }
                 if tok.typ == .EOF then break
             }
         }
@@ -400,4 +405,18 @@ dump_tokens :: (file: string) {
             io.formatln("File not found '{}'", [file])
         }
     }
+
+    io.println("`n-------------------------------`n")
+
+    stream := Rc[LexerInputStream].new(StdioInputStream.new())
+    lexer := Lexer.from_stream(stream, &string_db)
+    loop {
+        tok := lexer.get_mut().next_token()
+        io.formatln("{}", [tok])
+        if tok.typ == .KwDo {
+            lexer.get_mut().push_indent()
+        }
+        if tok.typ == .EOF then break
+    }
+
 }

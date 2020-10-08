@@ -11,17 +11,106 @@ use import std.array
 
 C  :: import std.c
 io :: import std.io
+mem :: import std.mem.allocator
 
 #export_scope
 
+LexerInputStream :: trait {
+    get_name :: (&Self) -> string;
+    get_text :: (&Self) -> Option[string];
+}
+
+StringInputStream :: struct {
+    contents : string
+    retrieved_contents := false
+}
+
+impl LexerInputStream for StringInputStream {
+    get_name :: (&Self) -> string {
+        return "string"
+    }
+
+    get_text :: (&Self) -> Option[string] {
+        result : Option[string] = if self.retrieved_contents then None else Some(self.contents)
+        @cast(&mut Self, self).retrieved_contents = true
+        return result
+    }
+}
+
+FileInputStream :: struct {
+    filename : string
+    contents : string
+    retrieved_contents := false
+}
+
+impl LexerInputStream for FileInputStream {
+    get_name :: (&Self) -> string {
+        return self.filename
+    }
+
+    get_text :: (&Self) -> Option[string] {
+        result : Option[string] = if self.retrieved_contents then None else Some(self.contents)
+        @cast(&mut Self, self).retrieved_contents = true
+        return result
+    }
+}
+
+StdioInputStream :: struct {
+    buffer : []char8
+}
+
+impl StdioInputStream {
+    new :: () -> StdioInputStream {
+        buffer := mem.alloc_n(char8, 256)
+        return StdioInputStream(buffer)
+    }
+}
+
+impl Drop for StdioInputStream {
+    drop :: (&Self) {
+        mem.free_n(self.buffer)
+        @cast(&mut Self, self).buffer = null
+    }
+}
+
+impl LexerInputStream for StdioInputStream {
+    get_name :: (&Self) -> string {
+        return "stdin"
+    }
+
+    get_text :: (&Self) -> Option[string] {
+        // io.formatln("StdioInputStream.get_text()")
+        self := cast(&mut Self) self
+
+        result := C.fgets(cast(^mut char8) self.buffer.data, i32(self.buffer.length), C.stdin)
+        if result == null {
+            // io.formatln("StdioInputStream.get_text() -> eof")
+            return None
+        }
+
+        for c in self.buffer {
+            if c == '`n' {
+                text := string(cast(^mut u8) self.buffer.data, it_index + 1)
+                // io.formatln("StdioInputStream.get_text() -> '{}'", [text])
+                return Some(text)
+            }
+        }
+
+        // this shouldn't happen
+        return Some("ERROR: StdioInputStream.get_text(): C.fgets return buffer not containing a new line`n")
+    }
+}
+
 Lexer :: struct {
-    text        : string
+    input_stream: Rc[LexerInputStream]
+    text        : String
     location    : Location
     last_token_location : Location
     next_queue  : RingQueue[Token]
     offset      : int
     string_db   : &StringDatabase
     indent      := 0
+    new_indent  := -1
     do_stack    := Array[(line: int, indent: int)].new()
 
     // interned keywords
@@ -62,7 +151,7 @@ Lexer :: struct {
 
 impl TextProvider for Lexer {
     get_text :: (&Self, filename: string) -> string {
-        return text
+        return text.slice()
     }
 }
 
@@ -70,18 +159,19 @@ impl Lexer {
     // i dont know why, but for some reason when I enable trace-stack this function crashes
     // but with #nostacktrace it works...
     // - NO, 09.12.19
-    from_string :: (content: string, string_db: &StringDatabase) -> Rc[Lexer] #nostacktrace {
+    from_stream :: (stream: Rc[LexerInputStream], string_db: &StringDatabase) -> Rc[Lexer] #nostacktrace {
         return Rc[Lexer].new(Lexer(
-            text = content
-            location = Location(
-                file = "string"
+            input_stream    = stream.clone()
+            text            = String.empty()
+            location        = Location(
+                file        = stream.get().get_name()
                 byte_index  = 0
                 byte_length = 1
                 line        = 1
                 column      = 1
             )
             last_token_location = Location(
-                file = "string"
+                file        = stream.get().get_name()
                 byte_index  = 0
                 byte_length = 1
                 line        = 1
@@ -127,15 +217,16 @@ impl Lexer {
         ))
     }
 
+    from_string :: (content: string, string_db: &mut StringDatabase) -> Rc[Lexer] {
+        return Lexer.from_stream(Rc[LexerInputStream].new(StringInputStream(content)), string_db)
+    }
+
     from_file :: (filename: string, string_db: &mut StringDatabase) -> Result[Rc[Lexer], ()] {
         content := {
             content := try_with(read_file(filename), {return Err(())})
             string_db.intern(content.slice())
         }
-        l := Lexer.from_string(content.slice(), string_db)
-        l.get_mut().location.file = filename
-        l.get_mut().last_token_location.file = filename
-        return Ok(l)
+        return Ok(Lexer.from_stream(Rc[LexerInputStream].new(FileInputStream(filename, content)), string_db))
     }
 
     current_location :: (&Self) -> Location {
@@ -162,6 +253,19 @@ impl Lexer {
     enqueue_token :: (&mut Self, token: Token) {
         self.last_token_location = token.location
         self.next_queue.push(token)
+    }
+
+    enqueue_eof :: (&mut Self) {
+        if self.next_queue.count() > 0 and self.next_queue.peek_last().typ == .EOF {
+            return
+        }
+        self.last_token_location = self.location
+        self.next_queue.push(Token(
+            typ      = .EOF
+            data     = .None
+            location = self.location
+            suffix   = None
+        ))
     }
 
     peek_token :: (&mut Self) -> &Token {
@@ -198,9 +302,9 @@ impl Lexer {
     advance :: (&mut Self) {
         skip_newlines_and_comments()
 
-        if self.do_stack.count() > 0 and self.do_stack.peek_last().line == location.line {
-            self.do_stack.pop()
-        }
+        // if self.do_stack.count() > 0 and self.do_stack.peek_last().line == location.line {
+        //     self.do_stack.pop()
+        // }
 
         mut token := Token(
             typ      = TokenType.EOF
@@ -211,102 +315,189 @@ impl Lexer {
 
         token.location.byte_length = 0
 
-        if location.byte_index - offset >= text.bytes.length {
-            if next_queue.count() == 0 or next_queue.peek_last().typ != .EOF {
-                self.enqueue_token(token)
-            }
-            return
-        }
-
         curr, curr_len := {
-            x := peek_char(0)
-            x[0], int(x[1])
-        }
-        next, next_len := {
-            x := peek_char(1)
-            x[0], int(x[1])
-        }
-        next2, next_len2 := {
-            x := peek_char(2)
+            x := try_with(peek_char(0), {
+                self.enqueue_eof()
+                return
+            })
             x[0], int(x[1])
         }
 
-        match curr, next {
-            '<', '-' -> simple_token(&token, TokenType.ReverseArrow,   curr_len + next_len, 2)
-            '-', '>' -> simple_token(&token, TokenType.Arrow,          curr_len + next_len, 2)
-            '=', '>' -> simple_token(&token, TokenType.DoubleArrow,    curr_len + next_len, 2)
-            '=', '=' -> simple_token(&token, TokenType.DoubleEqual,    curr_len + next_len, 2)
-            '!', '=' -> simple_token(&token, TokenType.NotEqual,       curr_len + next_len, 2)
-            '<', '=' -> simple_token(&token, TokenType.LessEqual,      curr_len + next_len, 2)
-            '<', '<' -> simple_token(&token, TokenType.LessLess,       curr_len + next_len, 2)
-            '>', '=' -> simple_token(&token, TokenType.GreaterEqual,   curr_len + next_len, 2)
-            '+', '=' -> simple_token(&token, TokenType.AddEq,          curr_len + next_len, 2)
-            '-', '=' -> simple_token(&token, TokenType.SubEq,          curr_len + next_len, 2)
-            '*', '=' -> simple_token(&token, TokenType.MulEq,          curr_len + next_len, 2)
-            '/', '=' -> simple_token(&token, TokenType.DivEq,          curr_len + next_len, 2)
-            '%', '=' -> simple_token(&token, TokenType.ModEq,          curr_len + next_len, 2)
-            '.', '.' if next2 == '=' -> simple_token(&token, TokenType.PeriodPeriodEq, curr_len + next_len + next_len2, 3)
-            '.', '.' -> simple_token(&token, TokenType.PeriodPeriod,   curr_len + next_len, 2)
-            ':', _   -> simple_token(&token, TokenType.Colon,          curr_len, 1)
-            ';', _   -> simple_token(&token, TokenType.Semicolon,      curr_len, 1)
-            '.', _   -> simple_token(&token, TokenType.Period,         curr_len, 1)
-            '=', _   -> simple_token(&token, TokenType.Equal,          curr_len, 1)
-            '(', _   -> simple_token(&token, TokenType.OpenParen,      curr_len, 1)
-            ')', _   -> simple_token(&token, TokenType.ClosingParen,   curr_len, 1)
-            '{', _   -> simple_token(&token, TokenType.OpenBrace,      curr_len, 1)
-            '}', _   -> simple_token(&token, TokenType.ClosingBrace,   curr_len, 1)
-            '[', _   -> simple_token(&token, TokenType.OpenBracket,    curr_len, 1)
-            ']', _   -> simple_token(&token, TokenType.ClosingBracket, curr_len, 1)
-            ',', _   -> simple_token(&token, TokenType.Comma,          curr_len, 1)
-            '&', _   -> simple_token(&token, TokenType.Ampersand,      curr_len, 1)
-            '^', _   -> simple_token(&token, TokenType.Hat,            curr_len, 1)
-            '*', _   -> simple_token(&token, TokenType.Asterisk,       curr_len, 1)
-            '/', _   -> simple_token(&token, TokenType.ForwardSlash,   curr_len, 1)
-            '+', _   -> simple_token(&token, TokenType.Plus,           curr_len, 1)
-            '%', _   -> simple_token(&token, TokenType.Percent,        curr_len, 1)
-            '-', _   -> simple_token(&token, TokenType.Minus,          curr_len, 1)
-            '<', _   -> simple_token(&token, TokenType.Less,           curr_len, 1)
-            '>', _   -> simple_token(&token, TokenType.Greater,        curr_len, 1)
-            '!', _   -> simple_token(&token, TokenType.Bang,           curr_len, 1)
-            '|', _   -> simple_token(&token, TokenType.Pipe,           curr_len, 1)
+        match curr {
+            '<' -> {
+                next, next_len := {
+                    x := try_with(peek_char(1), (char(0), i32(0)))
+                    x[0], int(x[1])
+                }
+                match next {
+                    '-' -> simple_token(&token, TokenType.ReverseArrow,   curr_len + next_len, 2)
+                    '=' -> simple_token(&token, TokenType.LessEqual,      curr_len + next_len, 2)
+                    '<' -> simple_token(&token, TokenType.LessLess,       curr_len + next_len, 2)
+                    _   -> simple_token(&token, TokenType.Less,           curr_len, 1)
+                }
+            }
+            '>' -> {
+                next, next_len := {
+                    x := try_with(peek_char(1), (char(0), i32(0)))
+                    x[0], int(x[1])
+                }
+                match next {
+                    '=' -> simple_token(&token, TokenType.GreaterEqual,   curr_len + next_len, 2)
+                    _   -> simple_token(&token, TokenType.Greater,        curr_len, 1)
+                }
+            }
+            '=' -> {
+                next, next_len := {
+                    x := try_with(peek_char(1), (char(0), i32(0)))
+                    x[0], int(x[1])
+                }
+                match next {
+                    '>' -> simple_token(&token, TokenType.DoubleArrow,    curr_len + next_len, 2)
+                    '=' -> simple_token(&token, TokenType.DoubleEqual,    curr_len + next_len, 2)
+                    _   -> simple_token(&token, TokenType.Equal,          curr_len, 1)
+                }
+            }
+            '!' -> {
+                next, next_len := {
+                    x := try_with(peek_char(1), (char(0), i32(0)))
+                    x[0], int(x[1])
+                }
+                match next {
+                    '=' -> simple_token(&token, TokenType.NotEqual,       curr_len + next_len, 2)
+                    _   -> simple_token(&token, TokenType.Bang,           curr_len, 1)
+                }
+            }
+            '+' -> {
+                next, next_len := {
+                    x := try_with(peek_char(1), (char(0), i32(0)))
+                    x[0], int(x[1])
+                }
+                match next {
+                    '=' -> simple_token(&token, TokenType.AddEq,          curr_len + next_len, 2)
+                    _   -> simple_token(&token, TokenType.Plus,           curr_len, 1)
+                }
+            }
+            '-' -> {
+                next, next_len := {
+                    x := try_with(peek_char(1), (char(0), i32(0)))
+                    x[0], int(x[1])
+                }
+                match next {
+                    '>' -> simple_token(&token, TokenType.Arrow,          curr_len + next_len, 2)
+                    '=' -> simple_token(&token, TokenType.SubEq,          curr_len + next_len, 2)
+                    _   -> simple_token(&token, TokenType.Minus,          curr_len, 1)
+                }
+            }
+            '*' -> {
+                next, next_len := {
+                    x := try_with(peek_char(1), (char(0), i32(0)))
+                    x[0], int(x[1])
+                }
+                match next {
+                    '=' -> simple_token(&token, TokenType.MulEq,          curr_len + next_len, 2)
+                    _   -> simple_token(&token, TokenType.Asterisk,       curr_len, 1)
+                }
+            }
+            '/' -> {
+                next, next_len := {
+                    x := try_with(peek_char(1), (char(0), i32(0)))
+                    x[0], int(x[1])
+                }
+                match next {
+                    '=' -> simple_token(&token, TokenType.DivEq,            curr_len + next_len, 2)
+                    _   -> simple_token(&token, TokenType.ForwardSlash,     curr_len, 1)
+                }
+            }
+            '%' -> {
+                next, next_len := {
+                    x := try_with(peek_char(1), (char(0), i32(0)))
+                    x[0], int(x[1])
+                }
+                match next {
+                    '=' -> simple_token(&token, TokenType.ModEq,            curr_len + next_len, 2)
+                    _   -> simple_token(&token, TokenType.Percent,          curr_len, 1)
+                }
+            }
+            '.' -> {
+                next, next_len := {
+                    x := try_with(peek_char(1), (char(0), i32(0)))
+                    x[0], int(x[1])
+                }
+                match next {
+                    '.' -> {
+                        next2, next_len2 := {
+                            x := try_with(peek_char(2), (char(0), i32(0)))
+                            x[0], int(x[1])
+                        }
+                        match next2 {
+                            '=' -> simple_token(&token, TokenType.PeriodPeriodEq, curr_len + next_len + next_len2, 3)
+                            _   -> simple_token(&token, TokenType.PeriodPeriod,   curr_len + next_len, 2)
+                        }
+                    }
+                    _   -> simple_token(&token, TokenType.Period, curr_len, 1)
+                }
+            }
+            ':' -> simple_token(&token, TokenType.Colon,            curr_len, 1)
+            ';' -> simple_token(&token, TokenType.Semicolon,        curr_len, 1)
+            '(' -> simple_token(&token, TokenType.OpenParen,        curr_len, 1)
+            ')' -> simple_token(&token, TokenType.ClosingParen,     curr_len, 1)
+            '{' -> simple_token(&token, TokenType.OpenBrace,        curr_len, 1)
+            '}' -> simple_token(&token, TokenType.ClosingBrace,     curr_len, 1)
+            '[' -> simple_token(&token, TokenType.OpenBracket,      curr_len, 1)
+            ']' -> simple_token(&token, TokenType.ClosingBracket,   curr_len, 1)
+            ',' -> simple_token(&token, TokenType.Comma,            curr_len, 1)
+            '&' -> simple_token(&token, TokenType.Ampersand,        curr_len, 1)
+            '^' -> simple_token(&token, TokenType.Hat,              curr_len, 1)
+            '|' -> simple_token(&token, TokenType.Pipe,             curr_len, 1)
 
-            '"', _  -> {
+            '`n' -> {
+                if do_stack.count() > 0 and do_stack.peek_last().line == self.location.line {
+                    simple_token(&token, .OpenBrace, curr_len, 1)
+                } else {
+                    simple_token(&token, .NewLine, curr_len, 1)
+                }
+                self.new_indent = -1
+                self.location.line += 1
+                self.location.column = 1
+            }
+
+            '"' -> {
                 parse_string_literal(&token, TokenType.StringLiteral, '"')
                 parse_suffix(&token)
             }
-            '`'', _ -> {
+            '`'' -> {
                 parse_string_literal(&token, TokenType.CharLiteral, '`'')
                 parse_suffix(&token)
             }
 
             // identifiers and keywords
-            '$', _ -> {
+            '$' -> {
                 location.byte_index += curr_len
                 location.column += 1
                 parse_identifier(&token, TokenType.DollarIdentifier)
             }
-            '#', _ ->  {
+            '#' ->  {
                 location.byte_index += curr_len
                 location.column += 1
                 parse_identifier(&token, TokenType.HashIdentifier)
             }
-            '@', _ ->  {
+            '@' ->  {
                 location.byte_index += curr_len
                 location.column += 1
                 parse_identifier(&token, TokenType.AtSignIdentifier)
             }
-            $x, _ if is_ident_begin(x) -> {
+            $x if is_ident_begin(x) -> {
                 parse_identifier(&token, TokenType.Identifier)
                 check_keywords(&token)
             }
 
             // number literal
-            $x, _ if is_digit(x) -> {
+            $x if is_digit(x) -> {
                 parse_number_literal(&token)
                 parse_suffix(&token)
             }
 
-            _, _ -> {
+            _ -> {
                 token.typ = TokenType.Unknown
                 location.byte_index += curr_len
             }
@@ -351,9 +542,10 @@ impl Lexer {
         use LexerNumberState
 
         mut state := Init
-        while location.byte_index - offset < text.bytes.length {
-            c, c_len := peek_char(0)
-            next, _  := peek_char(1)
+        // while location.byte_index - offset < text.bytes.length {
+        loop {
+            c, c_len := try_with(peek_char(0), break)
+            next, _  := try_with(peek_char(1), (char(0), i32(0)))
 
             match state {
                 Error -> break
@@ -549,16 +741,16 @@ impl Lexer {
     }
 
     parse_suffix :: (&mut Self, token: &mut Token) {
-        if is_ident_begin(peek_char(0)[0]) {
+        if is_ident_begin(try(peek_char(0))[0]) {
             start := location.byte_index - offset
-            while location.byte_index - offset < text.bytes.length {
-                c, c_len := peek_char(0)
+            loop {
+                c, c_len := try(peek_char(0))
                 if !is_ident_char(c) then break
                 location.byte_index += int(c_len)
                 location.column += 1
             }
 
-            token.suffix = Some(text[start .. location.byte_index - offset])
+            token.suffix = Some(self.text.slice()[start .. location.byte_index - offset])
         }
     }
 
@@ -572,14 +764,14 @@ impl Lexer {
         token.typ = typ
         start := location.byte_index - offset
 
-        while location.byte_index - offset < text.bytes.length {
-            c, c_len := peek_char(0)
+        loop {
+            c, c_len := try(peek_char(0))
             if !is_ident_char(c) then break
             location.byte_index += int(c_len)
             location.column += 1
         }
 
-        str := text[start .. location.byte_index - offset]
+        str := self.text.slice()[start .. location.byte_index - offset]
         token.data = TokenData.String(string_db.intern(str))
     }
 
@@ -590,8 +782,8 @@ impl Lexer {
         start := location.byte_index - offset
 
         mut foundEnd := false
-        while location.byte_index - offset < text.bytes.length {
-            c, c_len := peek_char(0)
+        loop {
+            c, c_len := try_with(peek_char(0), break)
             location.byte_index += int(c_len)
             location.column += 1
 
@@ -599,10 +791,10 @@ impl Lexer {
                 foundEnd = true
                 break
             } else if c == '``' {
-                if location.byte_index - offset >= text.bytes.length {
+                try_with(peek_char(0), {
                     // TODO: report error
                     break
-                }
+                })
 
                 location.byte_index += int(c_len)
                 location.column += 1
@@ -618,108 +810,133 @@ impl Lexer {
             // TODO: report
         }
 
-        str := text[start .. location.byte_index - offset - 1]
+        str := self.text.slice()[start .. location.byte_index - offset - 1]
         token.data = TokenData.String(string_db.intern(str))
     }
 
     skip_newlines_and_comments :: (&mut Self) {
-        mut newline_pos := Option[Location].None
-        mut new_indent := self.indent
-        while location.byte_index - offset < text.bytes.length {
-            curr, curr_len := peek_char(0)
-            next, next_len := peek_char(1)
+        loop {
+            curr, curr_len := try_with(peek_char(0), break)
 
-            if curr == '/' and next == '*' {
-                parse_multi_line_comment()
-            } else if curr == '/' and next == '/' {
-                parse_single_line_comment()
-            } else if curr == ' ' or curr == '`t' {
-                self.location.byte_index += int(curr_len)
-                self.location.column += 1
-            } else if curr == '`r' {
-                self.location.byte_index += int(curr_len)
-                self.location.column += 1
-            } else if curr == '`n' {
-                new_indent = -1
-                self.location.line += 1
-                self.location.byte_index += int(curr_len)
-                self.location.column = 1
-                newline_pos = Some(self.location)
-
-            } else {
-                if new_indent == -1 {
-                    new_indent = (self.location.column - 1) / 4
-
-                    if do_stack.count() > 0 and do_stack.peek_last().indent == self.indent and new_indent <= self.indent {
-                        self.enqueue_token(Token(
-                            typ      = .Error
-                            location = self.location
-                            data     = .String("Missing indentation")
-                        ))
-                        self.enqueue_token(Token(
-                            typ      = .OpenBrace
-                            location = self.location
-                        ))
-                        self.enqueue_token(Token(
-                            typ      = .ClosingBrace
-                            location = self.location
-                        ))
-                        do_stack.pop()
-                    } else {
-                        while self.indent < new_indent {
-                            if do_stack.count() > 0 and do_stack.peek_last().indent == self.indent {
-                                self.enqueue_token(Token(
-                                    typ      = .OpenBrace
-                                    location = self.last_token_location.end()
-                                ))
-                            }
-                            self.indent += 1
+            match curr {
+                '/' -> {
+                    next, next_len := try_with(peek_char(1), (char(0), i32(0)))
+                    match next {
+                        '*' -> {
+                            parse_multi_line_comment()
+                            continue
                         }
-                        while self.indent > new_indent {
-                            self.indent -= 1
-                            if do_stack.count() > 0 and do_stack.peek_last().indent == self.indent {
-                                self.enqueue_token(Token(
-                                    typ      = .ClosingBrace
-                                    location = self.last_token_location.end()
-                                ))
-                                do_stack.pop()
-                            }
+                        '/' -> {
+                            parse_single_line_comment()
+                            continue
+                        }
+
+                        _ -> {}
+                    }
+                }
+
+                ' ' -> {
+                    self.location.byte_index += int(curr_len)
+                    self.location.column += 1
+                    continue
+                }
+
+                '`t' -> {
+                    self.location.byte_index += int(curr_len)
+                    self.location.column += 1
+                    continue
+                }
+
+                '`n' -> {
+                    break
+                }
+            }
+
+            // non-whitespace character
+
+            if do_stack.count() > 0 and do_stack.peek_last().line == self.location.line {
+                // 'do' is followed by character which is not a newline, so don't do any indentation based block stuff
+                @assert(self.new_indent == self.indent)
+                do_stack.pop()
+            } else if self.new_indent == -1 {
+                // first character in this line
+                // handle indentation based block ending
+
+                self.new_indent = (self.location.column - 1) / 4
+
+                if do_stack.count() > 0 and do_stack.peek_last().indent == self.indent and self.new_indent <= self.indent {
+                    self.enqueue_token(Token(
+                        typ      = .Error
+                        location = self.location
+                        data     = .String("Missing indentation")
+                    ))
+                    self.enqueue_token(Token(
+                        typ      = .OpenBrace
+                        location = self.location
+                    ))
+                    self.enqueue_token(Token(
+                        typ      = .ClosingBrace
+                        location = self.location
+                    ))
+                    do_stack.pop()
+                } else {
+                    while self.indent > self.new_indent {
+                        self.indent -= 1
+                        if do_stack.count() > 0 and do_stack.peek_last().indent == self.indent {
+                            self.enqueue_token(Token(
+                                typ      = .ClosingBrace
+                                location = self.last_token_location.end()
+                            ))
+                            self.enqueue_token(Token(
+                                typ      = .NewLine
+                                location = self.last_token_location.end()
+                            ))
+                            do_stack.pop()
                         }
                     }
-
-                    self.indent = new_indent
                 }
-                match newline_pos {
-                    Some($loc) -> self.enqueue_token(Token(
-                        typ      = .NewLine
-                        location = loc
-                    ))
 
-                    None -> {}
-                }
-                break
+                self.indent = self.new_indent
             }
+            break
         }
     }
 
-    peek_char :: (&Self, mut offset: int) -> char, i32 {
+    peek_char :: (&Self, mut offset: int) -> Option[(char, i32)] {
         mut index := self.location.byte_index - self.offset
         while offset > 0, offset -= 1 {
-            _, len := Utf8.decode(text.slice().bytes[index..text.bytes.length])
+            if index >= self.text.get_length() {
+                match self.input_stream.get().get_text() {
+                    Some($t) -> self.text.append_string(t)
+                    None -> {
+                        return None
+                    }
+                }
+            }
+            _, len := Utf8.decode(self.text.slice().bytes[index..])
             index += int(len)
         }
-        if index >= text.bytes.length {
-            return char(0), 0
+
+        if index >= self.text.get_length() {
+            match self.input_stream.get().get_text() {
+                Some($t) -> self.text.append_string(t)
+                None -> {
+                    return None
+                }
+            }
+        }
+        if index >= self.text.get_length() {
+            return None
         }
 
-        return Utf8.decode(text.bytes[index..text.bytes.length])
+        return Some(Utf8.decode(self.text.slice().bytes[index..]))
     }
 
     parse_multi_line_comment :: (&mut Self) {
         mut level := 0
-        while self.location.byte_index - offset < text.bytes.length {
-            curr, curr_len := peek_char(0)
-            next, next_len := peek_char(1)
+        loop {
+            curr, curr_len := try_with(peek_char(0), break)
+            next, next_len := try_with(peek_char(1), (char(0), i32(0)))
 
             if curr == '/' and next == '*' {
                 self.location.byte_index += int(next_len)
@@ -744,8 +961,8 @@ impl Lexer {
     }
 
     parse_single_line_comment :: (&mut Self) {
-        while self.location.byte_index - offset < text.bytes.length {
-            next, len := peek_char(0)
+        loop {
+            next, len := try_with(peek_char(0), break)
             if next == '`n' {
                 break
             }

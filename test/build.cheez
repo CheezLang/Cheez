@@ -8,7 +8,6 @@ Main :: () {
     foo.b()
     foo.c()
     foo.d()
-    io.print_int(foo.v)
 }
 
 Foo :: struct {

@@ -483,9 +483,9 @@ impl Parser {
         children := Array[^mut AstNode].create()
 
         mut location := consume(.OpenBrace).location
-        self.skip_whitespace()
 
         loop {
+            self.skip_whitespace()
             mut next := *lexer.peek_token()
             if next.typ == .ClosingBrace or next.typ == .EOF {
                 break
@@ -751,13 +751,11 @@ impl Parser {
         return params
     }
 
-    parse_parenthesized :: (&Self, allow_comma: bool, allow_function: bool) -> ^mut AstNode {
-        beg := consume(.OpenParen).location
-
+    parse_values :: (&Self) -> Array[^mut AstNode], bool {
+        mut values := Array[^mut AstNode].create()
         mut ends_in_comma := false
-        values := Array[^mut AstNode].create()
         loop {
-            mut next := *lexer.peek_token()
+            mut next := lexer.peek_token()
             if next.typ == .ClosingParen or next.typ == .EOF {
                 break
             }
@@ -769,7 +767,7 @@ impl Parser {
                 values.add(expr)
             }
 
-            next = *lexer.peek_token()
+            next = lexer.peek_token()
             if next.typ == .ClosingParen or next.typ == .EOF {
                 break
             }
@@ -778,6 +776,13 @@ impl Parser {
             ends_in_comma = true
             self.skip_whitespace()
         }
+        return values, ends_in_comma
+    }
+
+    parse_parenthesized :: (&Self, allow_comma: bool, allow_function: bool) -> ^mut AstNode {
+        beg := consume(.OpenParen).location
+
+        values, ends_in_comma := self.parse_values()
 
         end := consume(.ClosingParen).location
 
@@ -947,6 +952,15 @@ impl Parser {
 
         beg := consume(.KwImpl).location
 
+        params : Option[Array[^mut AstDecl]] = if check_token(.OpenParen) {
+            lexer.next_token()
+            values, _ := self.parse_values()
+            self.consume(.ClosingParen)
+            Some(values_to_params(values))
+        } else {
+            None
+        }
+
         self.skip_whitespace()
         mut target := try(parse_expression(false, false))
 
@@ -981,6 +995,7 @@ impl Parser {
             children     = nodes
             target_expr  = &*target
             trait_expr   = target_trait
+            params       = params
         ))
     }
 

@@ -1,12 +1,16 @@
 use import std.printable
 use import std.string
 
+use import ast
+
 #export_scope
 
 TypeInfoError :: struct TypeInfo {}
 __ti_type_info_error := @type_info(TypeInfoError)
 
-TypeInfoPoly :: struct TypeInfo {}
+TypeInfoPoly :: struct TypeInfo {
+    ast : ^mut AstNode
+}
 __ti_type_info_poly := @type_info(TypeInfoPoly)
 
 TypeInfoModule :: struct TypeInfo {}

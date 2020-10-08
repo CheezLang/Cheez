@@ -627,15 +627,19 @@ impl CompileNode {
 
     compile_dot_struct :: (&mut Self, dot: &mut AstDot, original_sub: ^mut AstNode, typ: &TypeInfoStruct, ctx: CNContext) -> &mut AstNode {
         mut new_sub := original_sub
-        AstNode.set_flags(dot.name, .OnlyPubDeclarations)
+
         // wait_until(typ.members != null, {
         //     // @todo: report error? i dont think its necessary here
         // })
 
-        match workspace.get_struct_ast(typ) {
-            Some($ast) -> wait_until(ast.members_done, {
-                // nothing to see here...
-            })
+        struct_ast : ^mut AstStruct = match workspace.get_struct_ast(typ) {
+            Some($ast) -> {
+                wait_until(ast.members_done, {
+                    // nothing to see here...
+                })
+                ast
+            }
+            None -> null
         }
 
         // check if member with this name exists
@@ -648,6 +652,20 @@ impl CompileNode {
         }
 
         if member != null {
+            // check if member is public
+            only_public := !is_in_impl_for_type(typ)
+            if struct_ast != null {
+                @assert(member.index < struct_ast.members.count())
+                member_ast := struct_ast.members[member.index]
+                if only_public and !member_ast.public {
+                    workspace.error_handler.report_error_at(dot.location, "Can't access non-public member '{}.{}'", [typ, member.name], details=[
+                        ("Member defined here: {}", [member_ast.location])
+                    ])
+                    // do not poison 'dot' here because this error should have very little impact on following code
+                    // so we can continue typechecking
+                }
+            }
+
             dot.typ = member.typ
             dot.symbol = .StructMember(member)
             if dot.sub.has_flags(.LValue) then AstNode.set_flags(dot, .LValue)
@@ -812,16 +830,21 @@ impl CompileNode {
                 _ -> false
             }
 
-            AstDot($dot) -> {
-                @assert(dot.sub != null)
-                self.borrow_mutably(&*dot.sub, true)
+            AstDot($node) -> {
+                @assert(node.sub != null)
+                self.borrow_mutably(&*node.sub, true)
             }
 
-            AstUnary($un) if un.operator == .Deref -> {
-                self.borrow_mutably(&*un.sub, true)
+            AstUnary($node) if node.operator == .Deref -> {
+                self.borrow_mutably(node.sub, true)
+            }
+
+            AstIndex($node) -> {
+                self.borrow_mutably(node.sub, true)
             }
 
             $node -> {
+                g_logger.log("borrow_mutably: '{}' not implemented", [node])
                 @assert(false)
                 false
             }
@@ -1406,6 +1429,14 @@ impl CompileNode {
     }
 
     compile_impl :: (&mut Self, node: &mut AstImpl, ctx: CNContext) -> &mut AstNode {
+        if node.params.is_some() {
+            node.is_polymorphic = true
+            node.typ = @type_info(void)
+            // workspace.error_handler.report_error_at(node.location.beginning(), "Generic impls not implemented yet")
+            // poison(node)
+            return node
+        }
+
         node.target_expr.scope = node.scope
         compile_node(node.target_expr, ctx.with_expected(@type_info(type)))
         handle_poison(node, node.target_expr)
@@ -1548,16 +1579,17 @@ impl CompileNode {
                     poison(node)
                     return node
                 } else {
-                    for arg in &mut node.arguments {
+                    for arg in node.arguments.slice() {
                         param := poly.params[it_index]
 
                         arg.scope = node.scope
-                        evaluate_node(&**arg, ctx.with_expected(param.var_type))
+                        arg.value_expr.scope = node.scope
+                        arg.value_expr = evaluate_node(arg.value_expr, ctx.with_expected(param.var_type))
+                        arg.typ = arg.value_expr.typ
+                        arg.value = arg.value_expr.value
 
-                        if arg.value == .Poison {
-                            poison(node)
-                            return node
-                        }
+                        handle_poison(node, arg)
+
                         if !TypeInfo.same(arg.typ, param.var_type) {
                             workspace.error_handler.report_error_at(
                                 arg.location,
@@ -1592,13 +1624,13 @@ impl CompileNode {
 
         match node.sub.typ {
             TypeInfoArray($ti) -> {
-                for arg in &mut node.arguments {
+                for arg in node.arguments.slice() {
                     arg.scope = node.scope
                     arg.value_expr.scope = arg.scope
                     arg.value_expr = compile_node(arg.value_expr, ctx)
                     arg.typ = arg.value_expr.typ
                     arg.value = arg.value_expr.value
-                    handle_poison(node, **arg)
+                    handle_poison(node, *arg)
                 }
 
                 if node.arguments.count() != 1 {
@@ -1624,6 +1656,8 @@ impl CompileNode {
                         return node
                     }
                 }
+
+                AstNode.set_flags(node, .LValue)
             }
 
             _ -> {
@@ -1679,6 +1713,7 @@ impl CompileNode {
         if ret.value_expr != null {
             ret.value_expr.scope = ret.scope
             compile_node(&*ret.value_expr, ctx.with_expected(self.function.return_type))
+            handle_poison(ret, ret.value_expr)
 
             if !TypeInfo.same(ret.value_expr.typ, self.function.return_type) {
                 workspace.error_handler.report_error_at(
@@ -1813,13 +1848,13 @@ impl CompileNode {
             }
         }
 
-        for param in &poly.params {
+        for param in poly.params.slice() {
             param.scope = poly.scope
-            compile_node(&**param, ctx.with_expected(null))
-            handle_poison(poly, **param)
+            compile_node(&*param, ctx.with_expected(null))
+            handle_poison(poly, *param)
         }
 
-        poly.typ = @type_info(void)
+        poly.typ = workspace.poly_type(^*poly)
         poly.value = .Poly(^*poly)
         return poly
     }

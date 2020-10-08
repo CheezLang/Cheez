@@ -463,12 +463,13 @@ impl Workspace {
         return typ
     }
 
-    poly_type :: (&mut Self) -> ^mut TypeInfo {
+    poly_type :: (&mut Self, ast: ^mut AstNode = null) -> ^mut TypeInfo {
         typ := self.new_type(TypeInfoPoly(
             size        = 0
             alignment   = 1
             impl_funcs  = []
             traits      = []
+            ast         = ast
         ))
 
         return typ

@@ -101,11 +101,16 @@ AstImpl :: struct AstNode {
     target_expr : &mut AstNode
     trait_expr  : ^mut AstNode
     children    : Array[^mut AstNode]
+    params      : Option[Array[^mut AstDecl]]
 
     functions   := Array[^mut AstFunction].new(0)
     sub_scope   : ^mut Scope = null
-    
-    children_done := false // is true when all jobs for the children of this impl block are done
+
+    is_polymorphic  := false
+    instances       := Array[^mut AstImpl].new(1)
+
+    /// is true when all jobs for the children of this impl block are done
+    children_done := false
 }
 impl AstNode for AstImpl {}
 

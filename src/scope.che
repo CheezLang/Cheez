@@ -198,6 +198,14 @@ impl Scope {
             match &scope.impls {
                 Some($impls) -> {
                     for(by_ref=false) imp in impls {
+                        wait_until(imp.typ != null, {
+                            g_logger.log("[get_impl_symbol] Should this error happen?")
+                        })
+                        if imp.is_polymorphic {
+                            g_logger.log("checking if impl at {} matches type '{}'", [imp.location.beginning(), typ])
+                            continue
+                        }
+
                         wait_until(imp.target_expr.typ != null, {
                             // workspace.error_handler.report_error_at(dot.location, "Should this error happen?")
                             g_logger.log("[get_impl_symbol] Should this error happen?")
