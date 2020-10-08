@@ -512,6 +512,7 @@ command_repl :: (options: ^CommandRepl) {
             cast(NativeFunction) (interp) => {
                 frame := interp.top_frame()
                 io.set_console_foreground_color(.Green)
+                // g_logger.log("{} ", [frame.get_arg(0, string)])
                 io.formatln("{}", [frame.get_arg(0, string)])
                 io.set_console_foreground_color(.White)
             },
@@ -553,13 +554,12 @@ command_repl :: (options: ^CommandRepl) {
         compiler.flush_waiting_fibers()
     }
     
-    add_text(compiler.get_mut(), main_workspace.get_mut(), stream.get_mut(), "Main :: () { _println(`"foo`") }`n")
-    add_text(compiler.get_mut(), main_workspace.get_mut(), stream.get_mut(), "Main()`n")
+    add_text(compiler.get_mut(), main_workspace.get_mut(), stream.get_mut(), "std :: import `"std.cheez`"`n")
 
     main_workspace.get_mut().create_and_add_job(ReplJob.new(stream.clone().change_type(LexerInputStream)))
 
     loop {
-        C.printf("> ")
+        io.print("> ")
         result := C.fgets(cast(^mut char8) buffer.data, i32(buffer.length), C.stdin)
         if result == null {
             break
@@ -575,13 +575,48 @@ command_repl :: (options: ^CommandRepl) {
 
         if length != 0 {
             text := string(cast(^mut u8) buffer.data, length)
-            add_text(compiler.get_mut(), main_workspace.get_mut(), stream.get_mut(), text)
+
+            if text.starts_with("\") {
+                text := text[1..].trim()
+                if text == "quit" {
+                    break
+                } else if text == "status" {
+                    compiler.get_mut().lock()
+                    defer compiler.get_mut().release()
+                    
+                    waiting_fibers := &compiler.get().waiting_fibers
+                    ready_fibers := &compiler.get().ready_fibers
+                    io.formatln("{} fibers waiting:", [waiting_fibers.count()])
+                    for &fiber in waiting_fibers {
+                        if fiber.job == null {
+                            io.formatln("    [{}]", [it_index])
+                        } else {
+                            io.formatln("    [{}] {:?}", [it_index, fiber.job.get_name()])
+                        }
+                    }
+                    io.formatln("{} fibers ready:", [ready_fibers.count()])
+                    for &fiber in ready_fibers {
+                        if fiber.job == null {
+                            io.formatln("    [{}]", [it_index])
+                        } else {
+                            io.formatln("    [{}] {:?}", [it_index, fiber.job.get_name()])
+                        }
+                    }
+                } else if text == "flush" {
+                    
+                } else {
+                    io.formatln("Invalid command: '\{}'", [text])
+                }
+            } else {
+                add_text(compiler.get_mut(), main_workspace.get_mut(), stream.get_mut(), text)
+                // g_logger.log("wait idle")
+                compiler.get_mut().wait_idle()
+                // g_logger.log("idle")
+            }
         }
     }
 
-    io.formatln("after loop")
     stream.get_mut().close()
-
     compiler.get_mut().wait_until_done()
 }
 

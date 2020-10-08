@@ -610,6 +610,8 @@ Compiler :: struct {
     any_progress    := false
     keep_running    := true
 
+    is_idle         := true
+
     mutex           : Mutex
     thread_count    : int
     threads         : Array[Thread]
@@ -792,6 +794,23 @@ impl Compiler {
         g_logger.log("[Compiler] finished compilation with {} fibers", [fibers.get_length()])
     }
 
+    /// waits until the compiler has no jobs to execute or all jobs are waiting for something
+    wait_idle :: (&mut Self) {
+        loop {
+            {
+                self.lock()
+                defer self.release()
+
+                if self.is_idle {
+                    return
+                }
+            }
+
+            // @todo: design this differently to get rid of the sleep
+            Thread.sleep(5)
+        }
+    }
+
     find_free_fiber :: (&mut Self) -> ^mut FiberContext {
         for f in &fibers {
             if f.job == null and f.thread == -1 {
@@ -879,6 +898,7 @@ impl Compiler {
                         }
                     }
                     if has_jobs {
+                        self.is_idle = false
                         // do nothing
                         // this doesn't work right now
                         /*
@@ -892,11 +912,15 @@ impl Compiler {
                         // */
 
                     } else {
+                        self.is_idle = true
                         if self.keep_running or self.active_threads > 0 then continue
                         break main_loop
                     }
+                } else {
+                    self.is_idle = false
                 }
 
+                @assert(self.ready_fibers.count() > 0)
                 current_fiber = self.ready_fibers.pop()
                 current_fiber.thread = thread_id
                 active_threads += 1
