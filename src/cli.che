@@ -1,10 +1,12 @@
 use import std.array
+use import std.ring_queue
 use import std.mem.allocator
 use import std.mem.arena_allocator
 use import std.process
 use import std.string
 use import std.time
 use import std.rc
+use import std.thread
 
 C   :: import std.c
 fmt :: import std.fmt
@@ -42,7 +44,9 @@ Main :: () {
 
     match *compiler_args {
         MainCommand.Build($options) -> command_build(^options)
+
         MainCommand.Compile($options) -> command_compile(^options)
+        MainCommand.Repl($options) -> command_repl(^options)
 
         MainCommand.Project($poptions) -> match poptions {
             CommandProject.New($options) -> command_project_new(^options)
@@ -70,6 +74,10 @@ MainCommand :: enum {
     #name("build")
     #help("Build a project using a build script (default: build.cheez)")
     Build : CommandBuild
+
+    #name("repl")
+    #help("Start are repl session")
+    Repl : CommandRepl
 
     #name("project")
     #help("Manage projects")
@@ -106,6 +114,18 @@ e.g. ... compile foo bar")
 }
 
 CommandBuild :: struct {
+    thread_count := 1
+
+    debug_interpreter := false
+    debug_jobs        := false
+    debug_parser      := false
+    debug_wait        := false
+    dump_ast          := false
+    print_ast         := false
+    print_typed_ast   := false
+}
+
+CommandRepl :: struct {
     thread_count := 1
 
     debug_interpreter := false
@@ -386,6 +406,185 @@ command_build :: (options: ^CommandBuild) {
 }
 
 
+
+StdioInputStream :: struct {
+    mutex  := Mutex.new()
+    inputs := RingQueue[String].new()
+    closed := false
+    last   := String.empty()
+}
+
+impl StdioInputStream {
+    new :: () -> StdioInputStream {
+        return StdioInputStream()
+    }
+
+    add :: (&mut Self, input: string) {
+        self.mutex.lock()
+        defer self.mutex.release()
+        self.inputs.push(input.to_owned())
+    }
+
+    close :: (&mut Self) {
+        self.mutex.lock()
+        defer self.mutex.release()
+        self.closed = true
+    }
+}
+
+impl LexerInputStream for StdioInputStream {
+    get_name :: (&Self) -> string {
+        return "stdin"
+    }
+
+    get_text :: (&Self) -> Option[string] {
+        self := cast(&mut Self) self
+
+        self.mutex.lock()
+        defer self.mutex.release()
+
+        wait_until(self.inputs.count() > 0, on_error = {
+            // @todo: error, what to do?
+            return None
+        }, on_yield = {
+            if self.inputs.count() == 0 and self.closed {
+                io.formatln("on_yield: closed")
+                return None
+            }
+            self.mutex.release()
+        }, on_resume = {
+            self.mutex.lock()
+        })
+
+        @assert(self.inputs.count() > 0)
+
+        self.last = self.inputs.pop()
+        return Some(self.last.slice())
+    }
+}
+
+command_repl :: (options: ^CommandRepl) {
+    DEBUG_INTERPRETER = options.debug_interpreter
+    DEBUG_JOBS        = options.debug_jobs
+    DEBUG_PARSER      = options.debug_parser
+    DEBUG_WAIT        = options.debug_wait
+    DUMP_AST          = options.dump_ast
+    PRINT_AST         = options.print_ast
+    PRINT_TYPED_AST   = options.print_typed_ast
+
+    mut console_error_handler := ConsoleErrorHandler.new(null)
+
+    if options.thread_count < 1 or options.thread_count > 32 {
+        console_error_handler.report_error("Invalid thread_count: {}", [options.thread_count])
+        return
+    }
+
+    mut compiler := Compiler.new(options.thread_count, ^console_error_handler)
+    mut main_workspace := compiler.get().get_main_workspace()
+
+    //
+    compiler.get().user_defined_builtins.add((
+        "_get_compiler",
+        Symbol.NativeFunc(NativeFunctionWrapper.new(
+            cast(NativeFunction) (interp) => {
+                frame := interp.top_frame()
+                frame.set_return(g_compiler)
+            },
+            fn() -> ^Compiler
+        ))
+    ))
+
+    compiler.get().user_defined_builtins.add((
+        "_print_char",
+        Symbol.NativeFunc(NativeFunctionWrapper.new(
+            cast(NativeFunction) (interp) => {
+                frame := interp.top_frame()
+                io.set_console_foreground_color(.Green)
+                io.format("{}", [frame.get_arg(0, char)])
+                io.set_console_foreground_color(.White)
+            },
+            fn(char)
+        ))
+    ))
+    compiler.get().user_defined_builtins.add((
+        "_println",
+        Symbol.NativeFunc(NativeFunctionWrapper.new(
+            cast(NativeFunction) (interp) => {
+                frame := interp.top_frame()
+                io.set_console_foreground_color(.Green)
+                io.formatln("{}", [frame.get_arg(0, string)])
+                io.set_console_foreground_color(.White)
+            },
+            fn(string)
+        ))
+    ))
+    compiler.get().user_defined_builtins.add((
+        "_print",
+        Symbol.NativeFunc(NativeFunctionWrapper.new(
+            cast(NativeFunction) (interp) => {
+                frame := interp.top_frame()
+                io.set_console_foreground_color(.Green)
+                io.format("{}", [frame.get_arg(0, string)])
+                io.set_console_foreground_color(.White)
+            },
+            fn(string)
+        ))
+    ))
+
+    compiler.get().user_defined_builtins.add((
+        "_debugbreak",
+        Symbol.NativeFunc(NativeFunctionWrapper.new(
+            cast(NativeFunction) (interp) => {},
+            fn()
+        ))
+    ))
+
+    compiler.get_mut().module_path = "D:/dev/Cheez/Cheez/test"
+    compiler.get_mut().start_compilation()
+
+    buffer := alloc_n(char8, 1024)
+    defer free_n(buffer)
+
+    mut stream := Rc[StdioInputStream].new(StdioInputStream.new())
+
+    add_text :: (compiler: &mut Compiler, workspace: &mut Workspace, stream: &mut StdioInputStream, text: string) {
+        workspace.append_source_text("stdin", text)
+        stream.add(text)
+        compiler.flush_waiting_fibers()
+    }
+    
+    add_text(compiler.get_mut(), main_workspace.get_mut(), stream.get_mut(), "Main :: () { _println(`"foo`") }`n")
+    add_text(compiler.get_mut(), main_workspace.get_mut(), stream.get_mut(), "Main()`n")
+
+    main_workspace.get_mut().create_and_add_job(ReplJob.new(stream.clone().change_type(LexerInputStream)))
+
+    loop {
+        C.printf("> ")
+        result := C.fgets(cast(^mut char8) buffer.data, i32(buffer.length), C.stdin)
+        if result == null {
+            break
+        }
+
+        mut length := 0
+        for c in buffer {
+            if c == '`n' {
+                length = it_index + 1
+                break
+            }
+        }
+
+        if length != 0 {
+            text := string(cast(^mut u8) buffer.data, length)
+            add_text(compiler.get_mut(), main_workspace.get_mut(), stream.get_mut(), text)
+        }
+    }
+
+    io.formatln("after loop")
+    stream.get_mut().close()
+
+    compiler.get_mut().wait_until_done()
+}
+
 dump_tokens :: (file: string) {
     string_db := StringDatabase.new()
     
@@ -406,17 +605,17 @@ dump_tokens :: (file: string) {
         }
     }
 
-    io.println("`n-------------------------------`n")
+    // io.println("`n-------------------------------`n")
 
-    stream := Rc[LexerInputStream].new(StdioInputStream.new())
-    lexer := Lexer.from_stream(stream, &string_db)
-    loop {
-        tok := lexer.get_mut().next_token()
-        io.formatln("{}", [tok])
-        if tok.typ == .KwDo {
-            lexer.get_mut().push_indent()
-        }
-        if tok.typ == .EOF then break
-    }
+    // stream := Rc[LexerInputStream].new(StdioInputStream.new())
+    // lexer := Lexer.from_stream(stream, &string_db)
+    // loop {
+    //     tok := lexer.get_mut().next_token()
+    //     io.formatln("{}", [tok])
+    //     if tok.typ == .KwDo {
+    //         lexer.get_mut().push_indent()
+    //     }
+    //     if tok.typ == .EOF then break
+    // }
 
 }

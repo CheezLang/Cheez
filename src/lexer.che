@@ -8,6 +8,7 @@ use import std.io.fs
 use import std.rc
 use import std.ring_queue
 use import std.array
+use import std.thread
 
 C  :: import std.c
 io :: import std.io
@@ -52,52 +53,6 @@ impl LexerInputStream for FileInputStream {
         result : Option[string] = if self.retrieved_contents then None else Some(self.contents)
         @cast(&mut Self, self).retrieved_contents = true
         return result
-    }
-}
-
-StdioInputStream :: struct {
-    buffer : []char8
-}
-
-impl StdioInputStream {
-    new :: () -> StdioInputStream {
-        buffer := mem.alloc_n(char8, 256)
-        return StdioInputStream(buffer)
-    }
-}
-
-impl Drop for StdioInputStream {
-    drop :: (&Self) {
-        mem.free_n(self.buffer)
-        @cast(&mut Self, self).buffer = null
-    }
-}
-
-impl LexerInputStream for StdioInputStream {
-    get_name :: (&Self) -> string {
-        return "stdin"
-    }
-
-    get_text :: (&Self) -> Option[string] {
-        // io.formatln("StdioInputStream.get_text()")
-        self := cast(&mut Self) self
-
-        result := C.fgets(cast(^mut char8) self.buffer.data, i32(self.buffer.length), C.stdin)
-        if result == null {
-            // io.formatln("StdioInputStream.get_text() -> eof")
-            return None
-        }
-
-        for c in self.buffer {
-            if c == '`n' {
-                text := string(cast(^mut u8) self.buffer.data, it_index + 1)
-                // io.formatln("StdioInputStream.get_text() -> '{}'", [text])
-                return Some(text)
-            }
-        }
-
-        // this shouldn't happen
-        return Some("ERROR: StdioInputStream.get_text(): C.fgets return buffer not containing a new line`n")
     }
 }
 

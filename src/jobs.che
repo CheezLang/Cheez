@@ -4,6 +4,8 @@ use import std.math
 use import std.mem.std_heap_allocator
 use import std.printable
 use import std.string
+use import std.rc
+use import std.thread
 
 C    :: import std.c
 fmt  :: import std.fmt
@@ -55,6 +57,16 @@ impl LoadFileJob {
     }
 }
 
+ReplJob :: struct CompilationJob {
+    stream : Rc[LexerInputStream]
+}
+
+impl ReplJob {
+    new :: (stream: Rc[LexerInputStream]) -> ReplJob {
+        return ReplJob(stream = stream)
+    }
+}
+
 RunCodeJob :: struct CompilationJob {
     name        : String
     function    : ^AstFunction
@@ -65,6 +77,20 @@ impl RunCodeJob {
         return RunCodeJob(
             name        = fmt.format("RunCodeJob '{}'", [function.name])
             function    = function
+        )
+    }
+}
+
+EvaluateNodeJob :: struct CompilationJob {
+    name : String
+    node : &AstNode
+}
+
+impl EvaluateNodeJob {
+    new :: (node: &AstNode) -> EvaluateNodeJob {
+        return EvaluateNodeJob(
+            name = fmt.format("EvaluateNodeJob #{}", [node.id])
+            node = node
         )
     }
 }
@@ -255,6 +281,47 @@ impl CompilationJob for RunCodeJob {
     }
 }
 
+impl CompilationJob for EvaluateNodeJob {
+    get_name :: (&Self) -> string {
+        return name.slice()
+    }
+
+    debug_log :: (&Self, msg: string, args: []^any = []) {
+        if const DEBUG_ENABLED { if DEBUG_JOBS {
+            str := fmt.format(msg, args)
+            g_logger.log("[Workspace {}] [EvaluateNodeJob #{}] {}", [workspace.id, self.node.id, str])
+        }}
+    }
+
+    execute :: (&mut Self) {
+        debug_log("Begin evaluate node")
+        wait_until(self.node.typ != null, {
+            debug_log("cancelled due to errors")
+            return
+        })
+
+        debug_log("Generate bytecode")
+        code_gen := ByteCodeGenerator.new(&workspace.string_database, &*workspace.error_handler, workspace.bc_allocator)
+        code := code_gen.get_mut().generate_code_for_expression(self.node)
+        context := Fiber.user_data(FiberContext)
+        context.interp.push_frame(code)
+        defer context.interp.pop_frame()
+
+        debug_log("Run bytecode")
+        match compiler.code_runner.get().run(&*context.interp) {
+            .Error($msg) -> {
+                mut stacktrace := String.empty()
+                context.interp.write_stacktrace(&mut stacktrace, self.workspace.get_compiler())
+                frame := context.interp.top_frame()
+                location := frame.func.debug_info.get_location_for_ip(frame.ip)
+                workspace.error_handler.report_error_at(location, "{}", [msg], details = [("Stacktrace:`n{}", [stacktrace.slice()])])
+            }
+        }
+
+        debug_log("Done")
+    }
+}
+
 impl CompilationJob for LoadFileJob {
     get_name :: (&Self) -> string {
         return name.slice()
@@ -328,6 +395,61 @@ impl CompilationJob for LoadFileJob {
     }
 }
 
+impl CompilationJob for ReplJob {
+    get_name :: (&Self) -> string {
+        return "REPL"
+    }
+
+    debug_log :: (&Self, msg: string, args: []^any = []) {
+        if const DEBUG_ENABLED { if DEBUG_JOBS {
+            str := fmt.format(msg, args)
+            g_logger.log("[Workspace {}] [ReplJob] {}", [workspace.id, str])
+        }}
+    }
+
+    execute :: (&mut Self) {
+        debug_log("Begin")
+
+        // todo: workspace.string_database must be protected in multi threading
+        lexer := Lexer.from_stream(self.stream.clone(), &workspace.string_database)
+        parser := Parser.new(lexer.get_mut(), workspace.error_handler, workspace.ast_allocator, workspace.next_ast_id)
+        workspace.next_ast_id += 0xFFFFFFFF // ?
+
+        repl_scope := workspace.new_scope()
+        workspace.define_builtin_types(&*repl_scope)
+        repl_scope.mutex = Some(Mutex.new())
+
+        loop {
+            node := parser.parse_node()
+            if node == null then break
+
+            if const DEBUG_ENABLED { if DUMP_AST {
+                dump := dump_ast(&*node)
+                g_logger.log("[{}] {}", [self.get_name(), dump])
+            }}
+            if const DEBUG_ENABLED { if PRINT_AST {
+                dump := pretty_print_ast(&*node)
+                g_logger.log("[{}] {}", [self.get_name(), dump])
+            }}
+
+            node.scope = repl_scope
+
+            match node {
+                AstConstDecl($decl) -> {
+                    define_const_decl(&*decl, &*self.workspace)
+                }
+                AstDecl($decl) -> {
+                    define_decl(&*decl, &*self.workspace)
+                }
+                AstImpl($imp) -> node.scope.register_impl(imp)
+                _ -> {}
+            }
+
+            workspace.create_and_add_job(CompileGlobalNodeJob.new(node))
+            workspace.create_and_add_job(EvaluateNodeJob.new(&*node))
+        }
+    }
+}
 
 CompileNode :: struct {
     job         : ^CompilationJob

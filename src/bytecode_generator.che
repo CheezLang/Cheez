@@ -95,7 +95,7 @@ impl CodeGenerator for ByteCodeGenerator {
         func.bytecode = cbc_func
     }
 
-    generate_code_for_expression :: (&mut Self, node: &mut AstNode) -> ^mut CBCFunction {
+    generate_code_for_expression :: (&mut Self, node: &AstNode) -> ^mut CBCFunction {
         file_path := node.location.file
         cbc_func := self.allocate_function("$expr", file_path)
         builder.begin_function(cbc_func)

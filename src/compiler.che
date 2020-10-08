@@ -387,6 +387,16 @@ impl Workspace {
         return lexer
     }
 
+    append_source_text :: (&mut Self, filename: string, content: string) {
+        self.lock(&mutex)
+        defer self.release(&mutex)
+
+        match get_compiler().sources.get(filename) {
+            Some($source) -> source.append_string(content)
+            None -> get_compiler().sources.set(filename, content.to_owned())
+        }
+    }
+
     register_struct :: (&mut Self, typ: ^TypeInfoStruct, ast: ^mut AstStruct) {
         self.lock(&mutex)
         defer self.release(&mutex)
@@ -598,6 +608,7 @@ Compiler :: struct {
     ready_fibers    := RingQueue[^mut FiberContext].new(10)
     waiting_fibers  := RingQueue[^mut FiberContext].new(10)
     any_progress    := false
+    keep_running    := true
 
     mutex           : Mutex
     thread_count    : int
@@ -636,7 +647,11 @@ impl TextProvider for Compiler {
         // }
         return match self.sources.get(filename) {
             Some($content) -> content.slice()
-            None -> @assert(false)
+            None -> {
+                io.formatln("[ERROR] failed to get text for '{}'", [filename])
+                @assert(false)
+                ""
+            }
         }
     }
 }
@@ -665,11 +680,13 @@ impl Compiler {
     }
 
     lock :: (&mut Self) {
-        if threads.get_length() > 1 then mutex.lock()
+        // if threads.get_length() > 1 then mutex.lock()
+        mutex.lock()
     }
 
     release :: (&mut Self) {
-        if threads.get_length() > 1 then mutex.release()
+        // if threads.get_length() > 1 then mutex.release()
+        mutex.release()
     }
 
     run_job :: (&mut Self, context: ^FiberContext) {
@@ -762,6 +779,11 @@ impl Compiler {
     }
 
     wait_until_done :: (&mut Self) {
+        {
+            self.lock()
+            defer self.release()
+            self.keep_running = false
+        }
         wait_for_threads()
         if waiting_fibers.count() > 0 {
             global_error_handler.report_error("[Compile] {} fibers were still waiting", [waiting_fibers.count()])
@@ -797,6 +819,15 @@ impl Compiler {
             self.run_job(fiber_context)
             fiber_context.job.done = true
             fiber_context.job = null
+        }
+    }
+
+    flush_waiting_fibers :: (&mut Self) {
+        self.lock()
+        defer self.release()
+        while self.waiting_fibers.count() > 0 {
+            fiber := self.waiting_fibers.pop()
+            self.ready_fibers.push(fiber)
         }
     }
 
@@ -849,19 +880,19 @@ impl Compiler {
                     }
                     if has_jobs {
                         // do nothing
-                    // this doesn't work right now
-                    /*
-                    } else if self.waiting_fibers.count() > 0 {
-                        if self.active_threads > 0 then continue
+                        // this doesn't work right now
+                        /*
+                        } else if self.waiting_fibers.count() > 0 {
+                            if self.active_threads > 0 then continue
 
-                        // if all fibers are paused and we didn't make any progress
-                        // then we're done
-                        if !any_progress then break main_loop
-                        self.ready_fibers.push(self.waiting_fibers.pop())
-                    // */
+                            // if all fibers are paused and we didn't make any progress
+                            // then we're done
+                            if !any_progress then break main_loop
+                            self.ready_fibers.push(self.waiting_fibers.pop())
+                        // */
 
                     } else {
-                        if self.active_threads > 0 then continue
+                        if self.keep_running or self.active_threads > 0 then continue
                         break main_loop
                     }
                 }
