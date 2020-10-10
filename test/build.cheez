@@ -20,7 +20,7 @@ Bar :: (T: type, N: int) struct {
 }
 
 impl Bar[int, 3] {
-    pub print :: (self: &Bar[int, 3]) do
+    pub print :: (self: &Self) do
         io.print_int(self.v[0])
         io.print_int(self.v[1])
         io.print_int(self.v[2])
@@ -31,7 +31,7 @@ Foo :: struct {
 }
 
 impl Foo {
-    pub func :: (self: &Foo) do
+    pub func :: (self: &Self) do
         io.print_string("c()")
         io.print_int(self.v)
 }

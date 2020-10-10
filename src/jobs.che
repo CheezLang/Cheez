@@ -1594,6 +1594,8 @@ impl CompileNode {
         }
 
         node.sub_scope = workspace.new_scope(node.scope)
+        node.sub_scope.define_value("Self", node.target_expr.typ, node.target_expr.value)
+
         node.functions.reserve(node.children.count())
         jobs := Array[^CompilationJob].create()
 
