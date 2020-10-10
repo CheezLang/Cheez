@@ -173,12 +173,19 @@ AstFunction :: struct AstNode {
 }
 impl AstNode for AstFunction {}
 
+PolyInstance :: struct {
+    node        : &mut AstNode
+    arguments   : Array[Value]
+}
+
 AstPoly :: struct AstNode {
     params      : Array[^mut AstDecl]
     value_expr  : &mut AstNode
 
     param_scope : ^mut Scope
     name        := "#anonymous"
+
+    instances   := Array[PolyInstance].new(5)
 }
 impl AstNode for AstPoly {}
 

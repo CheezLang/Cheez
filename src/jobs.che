@@ -1704,51 +1704,7 @@ impl CompileNode {
 
         match node.sub.value {
             .Poly($poly) -> {
-                if node.arguments.count() != poly.params.length {
-                    workspace.error_handler.report_error_at(node.location, "Wrong number of arguments. Expected {}", [poly.params.length])
-                    poison(node)
-                    return node
-                } else {
-                    for arg in node.arguments.slice() {
-                        param := poly.params[it_index]
-
-                        arg.scope = node.scope
-                        arg.value_expr.scope = node.scope
-                        arg.value_expr = evaluate_node(arg.value_expr, ctx.with_expected(param.var_type))
-                        arg.typ = arg.value_expr.typ
-                        arg.value = arg.value_expr.value
-
-                        handle_poison(node, arg)
-
-                        if !TypeInfo.same(arg.typ, param.var_type) {
-                            workspace.error_handler.report_error_at(
-                                arg.location,
-                                "Type of argument ({}) does not match type of parameter '{}' ({}).",
-                                [arg.typ, param.name, param.var_type])
-                        }
-                    }
-                }
-
-                cloner := AstCloner(workspace.next_ast_id, workspace.ast_allocator)
-                mut clone := cloner.clone(^*poly.value_expr)
-                if clone == null {
-                    poison(node)
-                    return node
-                }
-
-                scope := workspace.new_scope(poly.scope)
-
-                for arg in &node.arguments {
-                    param := poly.params[it_index]
-
-                    scope.define_value(param.name, arg.typ, arg.value)
-                }
-
-                clone.scope = scope
-                result := evaluate_node(&*clone, ctx)
-                node.typ = result.typ
-                node.value = result.value
-                return node
+                return instantiate_poly(node, &*poly, ctx)
             }
         }
 
@@ -1799,6 +1755,81 @@ impl CompileNode {
                 return node
             }
         }
+
+        return node
+    }
+
+    instantiate_poly :: (&mut Self, node: &mut AstIndex, poly: &AstPoly, ctx: CNContext) -> &mut AstNode {
+        // @todo: use a mutex to protect poly since it could be accessed by multiple threads at the same time
+
+        if node.arguments.count() != poly.params.length {
+            workspace.error_handler.report_error_at(node.location, "Wrong number of arguments. Expected {}", [poly.params.length])
+            poison(node)
+            return node
+        } else {
+            for arg in node.arguments.slice() {
+                param := poly.params[it_index]
+
+                arg.scope = node.scope
+                arg.value_expr.scope = node.scope
+                arg.value_expr = evaluate_node(arg.value_expr, ctx.with_expected(param.var_type))
+                arg.typ = arg.value_expr.typ
+                arg.value = arg.value_expr.value
+
+                handle_poison(node, arg)
+
+                if !TypeInfo.same(arg.typ, param.var_type) {
+                    workspace.error_handler.report_error_at(
+                        arg.location,
+                        "Type of argument ({}) does not match type of parameter '{}' ({}).",
+                        [arg.typ, param.name, param.var_type])
+                }
+            }
+        }
+
+        // check if this poly expression was already instantiated with the same arguments
+        for &instance in poly.instances.slice() {
+            @assert(instance.arguments.count() == node.arguments.count())
+
+            mut matches := true
+            for &arg in instance.arguments.slice() {
+                if !Value.same(&node.arguments[it_index].value, arg) {
+                    matches = false
+                    break
+                }
+            }
+            if matches {
+                node.typ = instance.node.typ
+                node.value = instance.node.value
+                return node
+            }
+        }
+
+        cloner := AstCloner(workspace.next_ast_id, workspace.ast_allocator)
+        mut clone := cloner.clone(^*poly.value_expr)
+        if clone == null {
+            poison(node)
+            return node
+        }
+
+        scope := workspace.new_scope(poly.scope)
+
+        for arg in &node.arguments {
+            param := poly.params[it_index]
+
+            scope.define_value(param.name, arg.typ, arg.value)
+        }
+
+        clone.scope = scope
+        result := evaluate_node(&*clone, ctx)
+        node.typ = result.typ
+        node.value = result.value
+
+        arg_values := Array[Value].new(node.arguments.count())
+        for arg in node.arguments.slice() {
+            arg_values.add(arg.value)
+        }
+        poly.instances.add(PolyInstance(node, arg_values))
 
         return node
     }

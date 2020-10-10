@@ -36,6 +36,26 @@ impl Value {
             _ -> @assert(false)
         }
     }
+
+    same :: (a: &Self, b: &Self) -> bool {
+        use Value
+        return match *a, *b {
+            None, None                          -> true
+            Poison, Poison                      -> true
+            Function($v1), Function($v2)        -> v1 == v2
+            Poly($v1), Poly($v2)                -> v1 == v2
+            Bool($v1), Bool($v2)                -> v1 == v2
+            Char($v1), Char($v2)                -> v1 == v2
+            Int($v1), Int($v2)                  -> v1 == v2
+            Float($v1), Float($v2)              -> v1 == v2
+            String($v1), String($v2)            -> v1 == v2
+            NativeFunc($v1), NativeFunc($v2)    -> v1 == v2
+            NativeFunc2($v1), NativeFunc2($v2)  -> @assert(false)
+            Type($v1), Type($v2)                -> v1 == v2
+            Module($v1), Module($v2)            -> v1 == v2
+            _ -> false
+        }
+    }
 }
 
 NativeFunction :: Fn(^Interpreter)
