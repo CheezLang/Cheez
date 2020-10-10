@@ -280,37 +280,37 @@ impl Workspace {
 
     define_builtin_types :: (&mut Self, scope: &mut Scope) {
         // ints
-        scope.define_value("u8",  @type_info(type), .Type(@type_info(u8)))
-        scope.define_value("u16", @type_info(type), .Type(@type_info(u16)))
-        scope.define_value("u32", @type_info(type), .Type(@type_info(u32)))
-        scope.define_value("u64", @type_info(type), .Type(@type_info(u64)))
-        scope.define_value("i8",  @type_info(type), .Type(@type_info(i8)))
-        scope.define_value("i16", @type_info(type), .Type(@type_info(i16)))
-        scope.define_value("i32", @type_info(type), .Type(@type_info(i32)))
-        scope.define_value("i64", @type_info(type), .Type(@type_info(i64)))
+        scope.define_value("u8",  @type_info(type), .Type(&*@type_info(u8)))
+        scope.define_value("u16", @type_info(type), .Type(&*@type_info(u16)))
+        scope.define_value("u32", @type_info(type), .Type(&*@type_info(u32)))
+        scope.define_value("u64", @type_info(type), .Type(&*@type_info(u64)))
+        scope.define_value("i8",  @type_info(type), .Type(&*@type_info(i8)))
+        scope.define_value("i16", @type_info(type), .Type(&*@type_info(i16)))
+        scope.define_value("i32", @type_info(type), .Type(&*@type_info(i32)))
+        scope.define_value("i64", @type_info(type), .Type(&*@type_info(i64)))
 
         // floats
-        scope.define_value("f32", @type_info(type), .Type(@type_info(f32)))
-        scope.define_value("f64", @type_info(type), .Type(@type_info(f64)))
+        scope.define_value("f32", @type_info(type), .Type(&*@type_info(f32)))
+        scope.define_value("f64", @type_info(type), .Type(&*@type_info(f64)))
 
         // chars
-        scope.define_value("char8",  @type_info(type), .Type(@type_info(char8)))
-        scope.define_value("char16", @type_info(type), .Type(@type_info(char16)))
-        scope.define_value("char32", @type_info(type), .Type(@type_info(char32)))
+        scope.define_value("char8",  @type_info(type), .Type(&*@type_info(char8)))
+        scope.define_value("char16", @type_info(type), .Type(&*@type_info(char16)))
+        scope.define_value("char32", @type_info(type), .Type(&*@type_info(char32)))
 
         // other
-        scope.define_value("bool", @type_info(type), .Type(@type_info(bool)))
-        scope.define_value("string", @type_info(type), .Type(@type_info(string)))
-        scope.define_value("void", @type_info(type), .Type(@type_info(void)))
-        scope.define_value("type", @type_info(type), .Type(@type_info(type)))
+        scope.define_value("bool", @type_info(type), .Type(&*@type_info(bool)))
+        scope.define_value("string", @type_info(type), .Type(&*@type_info(string)))
+        scope.define_value("void", @type_info(type), .Type(&*@type_info(void)))
+        scope.define_value("type", @type_info(type), .Type(&*@type_info(type)))
 
         // defaults
-        scope.define_value("int", @type_info(type), .Type(@type_info(int)))
-        scope.define_value("float", @type_info(type), .Type(@type_info(float)))
-        scope.define_value("char", @type_info(type), .Type(@type_info(char)))
+        scope.define_value("int", @type_info(type), .Type(&*@type_info(int)))
+        scope.define_value("float", @type_info(type), .Type(&*@type_info(float)))
+        scope.define_value("char", @type_info(type), .Type(&*@type_info(char)))
 
         // structs
-        scope.define_value("String", @type_info(type), .Type(@type_info(String)))
+        scope.define_value("String", @type_info(type), .Type(&*@type_info(String)))
 
         // temp
         register_native_function_type(fn(^String))
@@ -404,12 +404,12 @@ impl Workspace {
         structs[int(typ)] = ast
     }
 
-    get_struct_ast :: (&mut Self, typ: ^TypeInfoStruct) -> Option[^mut AstStruct] {
+    get_struct_ast :: (&mut Self, typ: ^TypeInfoStruct) -> Option[&mut AstStruct] {
         self.lock(&mutex)
         defer self.release(&mutex)
 
         return match structs.get(int(typ)) {
-            Some($ast) -> Some(cast(^mut AstStruct) *ast)
+            Some($ast) -> Some(&*cast(^mut AstStruct) *ast)
             None -> None
         }
     }
@@ -453,16 +453,16 @@ impl Workspace {
         return scope
     }
 
-    new_type :: (&mut Self, type_info: $T) -> ^mut T {
+    new_type :: (&mut Self, type_info: $T) -> &mut T {
         self.lock(&mutex_type)
         defer self.release(&mutex_type)
 
         result := mem.alloc(T, type_allocator)
         *result = type_info
-        return result
+        return &*result
     }
 
-    new_module_type :: (&mut Self) -> ^mut TypeInfo {
+    new_module_type :: (&mut Self) -> &mut TypeInfo {
         typ := self.new_type(TypeInfoModule(
             size        = 0
             alignment   = 1
@@ -470,10 +470,10 @@ impl Workspace {
             traits      = []
         ))
 
-        return typ
+        return &*typ
     }
 
-    poly_type :: (&mut Self, ast: ^mut AstNode = null) -> ^mut TypeInfo {
+    poly_type :: (&mut Self, ast: ^mut AstNode = null) -> &mut TypeInfo {
         typ := self.new_type(TypeInfoPoly(
             size        = 0
             alignment   = 1
@@ -482,10 +482,10 @@ impl Workspace {
             ast         = ast
         ))
 
-        return typ
+        return &*typ
     }
 
-    pointer_type :: (&mut Self, target: ^TypeInfo, mutable: bool) -> ^mut TypeInfo {
+    pointer_type :: (&mut Self, target: &TypeInfo, mutable: bool) -> &mut TypeInfo {
         size := match target {
             TypeInfoTrait(_) -> 16
             TypeInfoAny(_) -> 24
@@ -501,10 +501,10 @@ impl Workspace {
             is_fat      = size > 8
         ))
 
-        return typ
+        return &*typ
     }
 
-    reference_type :: (&mut Self, target: ^TypeInfo, mutable: bool) -> ^mut TypeInfo {
+    reference_type :: (&mut Self, target: &TypeInfo, mutable: bool) -> &mut TypeInfo {
         size := match target {
             TypeInfoTrait(_) -> 16
             TypeInfoAny(_) -> 24
@@ -520,7 +520,7 @@ impl Workspace {
             is_fat      = size > 8
         ))
 
-        return typ
+        return &*typ
     }
 
     new_type_data_array :: (&mut Self, $T: type, count: int) -> []mut T {

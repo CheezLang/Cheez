@@ -349,11 +349,7 @@ dump_ast_helper :: (result: &mut String, node: &AstNode, recurse: bool, indent: 
         }
 
         $node -> {
-            // if ^node == null {
-            //     @assert(false)
-            // }
-            // fmt.format_into(result, "[ERROR] {}: node type not implemented: {}`n", [0, ^node])
-            fmt.format_into(result, "[ERROR] {}: node type not implemented`n", [0])
+            fmt.format_into(result, "[ERROR] node type not implemented`n", [])
         }
     }
 }

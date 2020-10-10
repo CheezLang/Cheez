@@ -163,7 +163,7 @@ AstFunction :: struct AstNode {
     body                : ^mut AstNode
     return_type_expr    : ^mut AstNode
 
-    param_scope         : ^mut Scope
+    param_scope         : ^mut Scope = null
     name                := "#anonymous"
     return_type         : ^TypeInfo = null
 
@@ -202,8 +202,8 @@ AstArgument :: struct AstNode {
 impl AstNode for AstArgument {}
 
 AstBlock :: struct AstNode {
-    sub_scope   : ^mut Scope
     children    : Array[^mut AstNode]
+    sub_scope   : ^mut Scope = null
 }
 impl AstNode for AstBlock {}
 
@@ -367,7 +367,7 @@ impl AstNode for AstDot {}
 AstIndex :: struct AstNode {
     sub         : &mut AstNode
     arguments   : Array[^mut AstArgument]
-    index       : ^mut AstNode
+    index       : ^mut AstNode = null
 }
 impl AstNode for AstIndex {}
 

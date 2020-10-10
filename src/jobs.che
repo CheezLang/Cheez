@@ -531,7 +531,6 @@ impl CompileNode {
     }
 
     compile_node :: (&mut Self, node: &mut AstNode, ctx: CNContext) -> &mut AstNode {
-        // g_logger.log("compile_node"
         if node.typ != null {
             return node
         }
@@ -767,7 +766,7 @@ impl CompileNode {
                 wait_until(ast.members_done, {
                     // nothing to see here...
                 })
-                ast
+                ^*ast
             }
             None -> null
         }
@@ -1142,7 +1141,7 @@ impl CompileNode {
             return arr
         }
 
-        arr.typ = workspace.new_type(TypeInfoArray(
+        arr.typ = ^*workspace.new_type(TypeInfoArray(
             size        = arr.values.count() * expected.size
             alignment   = expected.alignment
             traits      = []
@@ -1352,9 +1351,9 @@ impl CompileNode {
             }
 
             if reference {
-                un.typ = workspace.reference_type(un.sub.typ, mutable)
+                un.typ = workspace.reference_type(&*un.sub.typ, mutable)
             } else {
-                un.typ = workspace.pointer_type(un.sub.typ, mutable)
+                un.typ = workspace.pointer_type(&*un.sub.typ, mutable)
             }
         }
 
@@ -1931,7 +1930,7 @@ impl CompileNode {
             member_type_infos[it_index].name = mem.name
             member_type_infos[it_index].typ = mem.var_type
         }
-        str.struct_type = workspace.new_type(TypeInfoStruct(
+        str.struct_type = ^*workspace.new_type(TypeInfoStruct(
             size        = -1        // will be calculated later
             alignment   = -1        // will be calculated later
             traits      = []        // will be calculated later
@@ -1965,7 +1964,7 @@ impl CompileNode {
             str.struct_type.alignment = alignment
         }
 
-        str.value = .Type(str.struct_type)
+        str.value = .Type(&*str.struct_type)
         return str
     }
 
@@ -2201,16 +2200,17 @@ impl CompileNode {
                         // })
 
                         // get struct definition ast if available
-                        struct_decl : Option[&mut AstStruct] = match AstNode.get_original_symbol(call.function) {
-                            Some($original) -> match original {
-                                .OriginalNode($node) -> match node {
-                                    AstStruct($decl) -> Some(decl)
-                                    _ -> None
-                                }
-                                _ -> None
-                            }
-                            _ -> None
-                        }
+                        struct_decl := workspace.get_struct_ast(str)
+                        // struct_decl : Option[&mut AstStruct] = match AstNode.get_original_symbol(call.function) {
+                        //     Some($original) -> match original {
+                        //         .OriginalNode($node) -> match node {
+                        //             AstStruct($decl) -> Some(decl)
+                        //             _ -> None
+                        //         }
+                        //         _ -> None
+                        //     }
+                        //     _ -> None
+                        // }
 
                         // check for too many arguments
                         if call.arguments.count() > str.members.length {
@@ -2233,7 +2233,6 @@ impl CompileNode {
                                     return call
                                 }
 
-                                // g_logger.log("[compile_struct_init] unnamed arg {} ({}) -> field {}", [i, arg.location, arg.param])
                                 cast(&mut TypeInfoStructMember) str.members[i]
                             } else {
                                 name := arg.name.name
@@ -2246,7 +2245,6 @@ impl CompileNode {
                                     return call
                                 }
 
-                                // g_logger.log("[compile_struct_init] named arg '{}' {} ({}) -> field {}", [name, i, arg.location, arg.param])
                                 &mut *field
                             }
 
@@ -2303,7 +2301,7 @@ impl CompileNode {
                             return call
                         }
 
-                        call.typ = str
+                        call.typ = ^*str
                         return call
                     }
 
@@ -2445,7 +2443,6 @@ impl CompileNode {
         block.sub_scope = workspace.new_scope(block.scope)
 
         for child in &block.children {
-            // g_logger.log("compile_block {}", [it_index])
 
             child.scope = block.sub_scope
 
@@ -2553,7 +2550,7 @@ impl CompileNode {
         }
 
         // set function type
-        func.typ = workspace.new_type(TypeInfoFunction(
+        func.typ = ^*workspace.new_type(TypeInfoFunction(
             size        = 8
             alignment   = 8
             traits      = []

@@ -17,304 +17,269 @@ AstCloner :: struct {
 }
 
 impl AstCloner {
-    new_ast :: (&mut Self, ast: $T) -> ^mut AstNode {
-        result := mem.alloc(T, allocator)
-        *result = ast
-        result.id = _next_id
-        _next_id += 1
-        return result
+    new_ast :: (&mut Self, $T: type, ast: $K) -> T {
+        match T {
+            ^$V -> {
+                @static_assert(V == K)
+                result := mem.alloc(K, allocator)
+                *result = ast
+                result.id = _next_id
+                _next_id += 1
+                return result
+            }
+
+            &$V -> {
+                @static_assert(V == K)
+                result := mem.alloc(K, allocator)
+                *result = ast
+                result.id = _next_id
+                _next_id += 1
+                return &*result
+            }
+
+            _ -> @static_assert(false, @typename(T))
+        }
     }
 
-    clone_array :: (&mut Self, arr: []^mut AstNode) -> Array[^mut AstNode] {
-        result := Array[^mut AstNode].create(arr.length)
+    clone_array :: (&mut Self, arr: []$T) -> Array[T] {
+        result := Array[T].create(arr.length)
         for node in arr {
-            result.add(node)
+            result.add(clone(node))
         }
         return result
     }
 
-    clone :: (&mut Self, node: ^mut AstNode) -> ^mut AstNode {
-        if node == null {
-            return null
+    clone :: (&mut Self, node: $T) -> T {
+        NodeType :: match T {
+            ^$V -> {
+                if node == null {
+                    return null
+                }
+                V
+            }
+            &$V -> V
+            _ -> @static_assert(false, @typename(T))
         }
-        return match node {
-            // AstArgument($arg) -> {
-            //     return new_ast(AstArgument(
-
-            //     ))
-            // }
-
-            // AstAssignment($ass) -> {
-            //     fmt.format_into(result, "AstAssignment #{} ({})`n", [ass.id, ass.location])
-            //     if recurse {
-            //         clone_ast_helper(result, ass.pattern, recurse, indent + 1)
-            //         clone_ast_helper(result, ass.value_expr, recurse, indent + 1)
-            //     }
-            // }
-
-            // AstArray($array) -> {
-            //     fmt.format_into(result, "AstArray #{} ({})`n", [array.id, array.location])
-            //     if recurse {
-            //         for val in array.values {
-            //             clone_ast_helper(result, *val, recurse, indent + 1)
-            //         }
-            //     }
-            // }
-
-            // AstArrayType($array) -> {
-            //     fmt.format_into(result, "AstArrayType #{} ({})`n", [array.id, array.location])
-            //     if recurse {
-            //         if array.count != null then
-            //             clone_ast_helper(result, *array.count, recurse, indent + 1)
-            //         clone_ast_helper(result, array.target, recurse, indent + 1)
-            //     }
-            // }
-
-            // AstBlock($block) -> {
-            //     fmt.format_into(result, "AstBlock #{} ({})`n", [block.id, block.location])
-            //     if recurse {
-            //         for child in block.children {
-            //             clone_ast_helper(result, *child, recurse, indent + 1)
-            //         }
-            //     }
-            // }
-
-            // AstBool($num) -> {
-            //     fmt.format_into(result, "AstBool #{} {} ({})`n", [num.id, num.bool_value, num.location])
-            // }
-
-            AstBinary($node) -> new_ast(AstBinary(
+        return match NodeType {
+            AstArgument -> new_ast(T, AstArgument(
                 location    = node.location
-                operator    = node.operator
-                left        = &*clone(^*node.left)
-                right       = &*clone(^*node.right)
+                name        = clone(node.name)
+                value_expr  = clone(node.value_expr)
+                param       = .None
             ))
 
-            // AstBreak($brake) -> {
-            //     fmt.format_into(result, "AstBreak #{} ({})`n", [brake.id, brake.location])
-            //     if recurse {
-            //         if brake.label != null then
-            //             clone_ast_helper(result, *brake.label, recurse, indent + 1)
-            //         if brake.value_expr != null then
-            //             clone_ast_helper(result, *brake.value_expr, recurse, indent + 1)
-            //     }
-            // }
+            AstArray -> new_ast(T, AstArray(
+                location    = node.location
+                values      = clone_array(node.values.slice())
+            ))
 
-            // AstContinue($cont) -> {
-            //     fmt.format_into(result, "AstContinue #{} ({})`n", [cont.id, cont.location])
-            //     if recurse {
-            //         if cont.label != null then
-            //             clone_ast_helper(result, *cont.label, recurse, indent + 1)
-            //     }
-            // }
+            AstArrayType -> new_ast(T, AstArrayType(
+                location    = node.location
+                count       = clone(node.count)
+                target      = clone(node.target)
+            ))
 
-            // AstConstDecl($decl) -> {
-            //     fmt.format_into(result, "AstConstDecl #{} ({})`n", [decl.id, decl.location])
-            //     if recurse {
-            //         clone_ast_helper(result, decl.pattern, recurse, indent + 1)
-            //         if decl.type_expr != null then
-            //             clone_ast_helper(result, *decl.type_expr, recurse, indent + 1)
-            //         clone_ast_helper(result, decl.value_expr, recurse, indent + 1)
-            //     }
-            // }
+            AstAssignment -> new_ast(T, AstAssignment(
+                location    = node.location
+                pattern     = clone(node.pattern)
+                value_expr  = clone(node.value_expr)
+            ))
 
-            // AstCall($call) -> {
-            //     fmt.format_into(result, "AstCall #{} ({})`n", [call.id, call.location])
-            //     if recurse {
-            //         clone_ast_helper(result, call.function, recurse, indent + 1)
-            //         for arg in call.arguments {
-            //             clone_ast_helper(result, *arg, recurse, indent + 1)
-            //         }
-            //     }
-            // }
-            
-            // AstCast($cst) -> {
-            //     fmt.format_into(result, "AstCast #{} ({})`n", [cst.id, cst.location])
-            //     if recurse {
-            //         if cst.type_expr != null then
-            //             clone_ast_helper(result, *cst.type_expr, recurse, indent + 1)
-            //         clone_ast_helper(result, cst.value_expr, recurse, indent + 1)
-            //     }
-            // }
+            AstBinary -> new_ast(T, AstBinary(
+                location    = node.location
+                operator    = node.operator
+                left        = clone(node.left)
+                right       = clone(node.right)
+            ))
 
-            AstDecl($node) -> new_ast(AstDecl(
+            AstBlock -> new_ast(T, AstBlock(
+                location    = node.location
+                children    = clone_array(node.children.slice())
+            ))
+
+            AstBool -> new_ast(T, AstBool(
+                location    = node.location
+                bool_value  = node.bool_value
+            ))
+
+            AstBreak -> new_ast(T, AstBreak(
+                location    = node.location
+                label       = clone(node.label)
+                value_expr  = clone(node.value_expr)
+            ))
+
+            AstCall -> new_ast(T, AstCall(
+                location    = node.location
+                function    = clone(node.function)
+                arguments   = clone_array(node.arguments.slice())
+            ))
+
+            AstCast -> new_ast(T, AstCast(
+                location    = node.location
+                type_expr   = clone(node.type_expr)
+                value_expr  = clone(node.value_expr)
+            ))
+
+            AstConstDecl -> new_ast(T, AstConstDecl(
+                location    = node.location
+                pattern     = clone(node.pattern)
+                type_expr   = clone(node.type_expr)
+                value_expr  = clone(node.value_expr)
+                public      = node.public
+            ))
+
+            AstContinue -> new_ast(T, AstContinue(
+                location    = node.location
+                label       = clone(node.label)
+            ))
+
+            AstDecl -> new_ast(T, AstDecl(
                 location    = node.location
                 pattern     = clone(node.pattern)
                 type_expr   = clone(node.type_expr)
                 value_expr  = clone(node.value_expr)
                 mutable     = node.mutable
+                public      = node.public
             ))
 
-            // AstDot($dot) -> {
-            //     fmt.format_into(result, "AstDot #{} ({})`n", [dot.id, dot.location])
-            //     if recurse {
-            //         if dot.sub != null then
-            //             clone_ast_helper(result, *dot.sub, recurse, indent + 1)
-            //         clone_ast_helper(result, dot.name, recurse, indent + 1)
-            //     }
-            // }
+            AstDefer -> new_ast(T, AstDefer(
+                location    = node.location
+                sub         = clone(node.sub)
+            ))
 
-            // AstDefer($def) -> {
-            //     fmt.format_into(result, "AstDefer #{} ({})`n", [def.id, def.location])
-            //     if recurse {
-            //         clone_ast_helper(result, def.sub, recurse, indent + 1)
-            //     }
-            // }
-            
-            // AstEnum($str) -> {
-            //     fmt.format_into(result, "AstEnum #{} ({})`n", [str.id, str.location])
-            //     if recurse {
-            //     }
-            // }
+            AstDot -> new_ast(T, AstDot(
+                location    = node.location
+                sub         = clone(node.sub)
+                name        = clone(node.name)
+            ))
 
-            // AstFunction($func) -> {
-            //     fmt.format_into(result, "AstFunction #{} ({})`n", [func.id, func.location])
-            //     if recurse {
-            //         print("params:`n", indent + 1)
-            //         for param in func.params {
-            //             clone_ast_helper(result, *param, recurse, indent + 2)
-            //         }
-            //         if func.return_type_expr != null {
-            //             print("return_type_expr:`n", indent + 1)
-            //             clone_ast_helper(result, *func.return_type_expr, recurse, indent + 2)
-            //         }
-            //         if func.body != null {
-            //             print("body:`n", indent + 1)
-            //             clone_ast_helper(result, *func.body, recurse, indent + 2)
-            //         }
-            //     }
-            // }
+            // AstEnum -> {
 
-            // AstFor($forr) -> {
-            //     fmt.format_into(result, "AstFor #{} ({})`n", [forr.id, forr.location])
-            //     if recurse {
-            //         if forr.it_name != null then
-            //             clone_ast_helper(result, *forr.it_name, recurse, indent + 1)
-            //         if forr.index_name != null then
-            //             clone_ast_helper(result, *forr.index_name, recurse, indent + 1)
-            //         clone_ast_helper(result, forr.collection, recurse, indent + 1)
-            //         clone_ast_helper(result, forr.body, recurse, indent + 1)
-            //     }
-            // }
+            // AstFor -> {
 
-            AstIdentifier($node) -> new_ast(AstIdentifier(
+            AstFunction -> new_ast(T, AstFunction(
+                location    = node.location
+                params      = clone_array(node.params.slice())
+                body        = clone(node.body)
+                return_type_expr = clone(node.return_type_expr)
+            ))
+
+            AstIdentifier -> new_ast(T, AstIdentifier(
                 location    = node.location
                 name        = node.name
             ))
 
-            // AstIf($iff) -> {
-            //     fmt.format_into(result, "AstIf #{} ({})`n", [iff.id, iff.location])
-            //     if recurse {
-            //         clone_ast_helper(result, iff.condition, recurse, indent + 1)
-            //         clone_ast_helper(result, iff.true_case, recurse, indent + 1)
-            //         if iff.false_case != null then
-            //             clone_ast_helper(result, *iff.false_case, recurse, indent + 1)
-            //     }
-            // }
+            AstIf -> new_ast(T, AstIf(
+                location    = node.location
+                condition   = clone(node.condition)
+                true_case   = clone(node.true_case)
+                false_case  = clone(node.false_case)
+            ))
 
-            // AstIndex($node) -> {
-            //     fmt.format_into(result, "AstIndex #{} ({})`n", [node.id, node.location])
-            //     if recurse {
-            //         clone_ast_helper(result, node.sub, recurse, indent + 1)
-            //         for arg in node.arguments {
-            //             clone_ast_helper(result, *arg, recurse, indent + 1)
-            //         }
-            //     }
-            // }
+            AstImport -> new_ast(T, AstImport(
+                location    = node.location
+                path        = clone(node.path)
+            ))
 
-            AstNumberLiteral($node) -> new_ast(AstNumberLiteral(
+            AstIndex -> new_ast(T, AstIndex(
+                location    = node.location
+                sub         = clone(node.sub)
+                arguments   = clone_array(node.arguments.slice())
+            ))
+
+            AstLoop -> new_ast(T, AstLoop(
+                location    = node.location
+                body        = clone(node.body)
+            ))
+
+            // AstMatch -> {
+
+            AstNumberLiteral -> new_ast(T, AstNumberLiteral(
                 location    = node.location
                 value       = node.value
             ))
 
-            // AstNull($num) -> {
-            //     fmt.format_into(result, "AstNull #{} ({})`n", [num.id, num.location])
-            // }
+            AstNull -> new_ast(T, AstNull(
+                location    = node.location
+            ))
 
-            // AstString($num) -> {
-            //     fmt.format_into(result, "AstString #{} '{}' ({})`n", [num.id, num.string_value, num.location])
-            // }
+            AstReturn -> new_ast(T, AstReturn(
+                location    = node.location
+                value_expr  = clone(node.value_expr)
+            ))
 
-            // AstUfc($ufc) -> {
-            //     fmt.format_into(result, "AstUfc #{} ({})`n", [ufc.id, ufc.location])
-            //     if recurse {
-            //         clone_ast_helper(result, ufc.value_expr, recurse, indent + 1)
-            //     }
-            // }
+            AstString -> new_ast(T, AstString(
+                location    = node.location
+                string_value = node.string_value
+            ))
 
-            // AstUnary($un) -> {
-            //     fmt.format_into(result, "AstUnary #{} {} ({})`n", [un.id, un.operator, un.location])
-            //     if recurse {
-            //         clone_ast_helper(result, un.sub, recurse, indent + 1)
-            //     }
-            // }
+            // AstPoly -> {
 
-            // AstLoop($lop) -> {
-            //     fmt.format_into(result, "AstLoop #{} ({})`n", [lop.id, lop.location])
-            //     if recurse {
-            //         clone_ast_helper(result, lop.body, recurse, indent + 1)
-            //     }
-            // }
-
-            // AstReturn($ret) -> {
-            //     fmt.format_into(result, "AstReturn #{} ({})`n", [ret.id, ret.location])
-            //     if recurse {
-            //         if ret.value_expr != null then
-            //             clone_ast_helper(result, *ret.value_expr, recurse, indent + 1)
-            //     }
-            // }
-
-            // AstImport($imp) -> {
-            //     fmt.format_into(result, "AstImport #{} ({})`n", [imp.id, imp.location])
-            //     if recurse {
-            //         clone_ast_helper(result, imp.path, recurse, indent + 1)
-            //     }
-            // }
-
-            // AstMatch($mat) -> {
-            //     fmt.format_into(result, "AstMatch #{} ({})`n", [mat.id, mat.location])
-            //     if recurse {
-            //         clone_ast_helper(result, mat.value_expr, recurse, indent + 1)
-            //         // @todo
-            //     }
-            // }
-
-            // AstPoly($poly) -> {
-            //     fmt.format_into(result, "AstPoly #{} ({})`n", [poly.id, poly.location])
-            //     if recurse {
-            //         for param in poly.params {
-            //             clone_ast_helper(result, *param, recurse, indent + 2)
-            //         }
-            //         clone_ast_helper(result, poly.value_expr, recurse, indent + 1)
-            //     }
-            // }
-            
-            AstStruct($node) -> new_ast(AstStruct(
+            AstStruct -> new_ast(T, AstStruct(
                 location    = node.location
                 name        = node.name
                 trait_expr  = clone(node.trait_expr)
                 children    = clone_array(node.children.slice())
             ))
 
-            // AstTuple($tuple) -> {
-            //     fmt.format_into(result, "AstTuple #{} ({})`n", [tuple.id, tuple.location])
-            //     if recurse {
-            //         for val in tuple.values {
-            //             clone_ast_helper(result, *val, recurse, indent + 1)
-            //         }
-            //     }
-            // }
-            
-            // AstTrait($str) -> {
-            //     fmt.format_into(result, "AstTrait #{} ({})`n", [str.id, str.location])
-            //     if recurse {
-            //     }
-            // }
+            // AstTuple -> {
 
-            $node -> {
-                dump := dump_ast(&*node)
-                g_logger.log("[ERROR] clone ast: node type not implemented: {}`n", [dump])
-                cast(^mut AstNode) null
+            // AstTrait -> {
+
+            // AstUfc -> {
+
+            AstUnary -> new_ast(T, AstUnary(
+                location    = node.location
+                operator    = node.operator
+                sub         = clone(node.sub)
+            ))
+
+            AstNode -> match node {
+                AstArgument($node) -> cast(T) clone(node)
+                AstArray($node) -> cast(T) clone(node)
+                AstArrayType($node) -> cast(T) clone(node)
+                AstAssignment($node) -> cast(T) clone(node)
+                AstBinary($node) -> cast(T) clone(node)
+                AstBlock($node) -> cast(T) clone(node)
+                AstBool($node) -> cast(T) clone(node)
+                AstBreak($node) -> cast(T) clone(node)
+                AstCall($node) -> cast(T) clone(node)
+                AstCast($node) -> cast(T) clone(node)
+                AstConstDecl($node) -> cast(T) clone(node)
+                AstContinue($node) -> cast(T) clone(node)
+                AstDecl($node) -> cast(T) clone(node)
+                AstDefer($node) -> cast(T) clone(node)
+                AstDot($node) -> cast(T) clone(node)
+                // AstEnum($node) -> cast(T) clone(node)
+                // AstFor($node) -> cast(T) clone(node)
+                AstFunction($node) -> cast(T) clone(node)
+                AstIdentifier($node) -> cast(T) clone(node)
+                AstIf($node) -> cast(T) clone(node)
+                AstImport($node) -> cast(T) clone(node)
+                AstIndex($node) -> cast(T) clone(node)
+                AstLoop($node) -> cast(T) clone(node)
+                // AstMatch($node) -> cast(T) clone(node)
+                AstNumberLiteral($node) -> cast(T) clone(node)
+                AstNull($node) -> cast(T) clone(node)
+                AstReturn($node) -> cast(T) clone(node)
+                AstString($node) -> cast(T) clone(node)
+                // AstPoly($node) -> cast(T) clone(node)
+                AstStruct($node) -> cast(T) clone(node)
+                // AstTuple($node) -> cast(T) clone(node)
+                // AstTrait($node) -> cast(T) clone(node)
+                // AstUfc($node) -> cast(T) clone(node)
+                AstUnary($node) -> cast(T) clone(node)
+                _ -> {
+                    @assert(false)
+                    node
+                }
+            }
+
+            _ -> {
+                @static_assert(false, @typename(T) + " not implemented yet")
+                // dump := dump_ast(&*node)
+                // g_logger.log("[ERROR] clone ast: node type not implemented: {}`n", [dump])
+                // node
             }
         }
     }

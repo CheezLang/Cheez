@@ -19,7 +19,7 @@ Value :: enum #copy {
     String      : string
     NativeFunc  : ^NativeFunctionWrapper
     NativeFunc2 : (wrapper: NativeFunctionWrapper2, func: fn())
-    Type        : ^TypeInfo
+    Type        : &TypeInfo
     Module      : ^SourceFile
 }
 
@@ -51,7 +51,7 @@ impl Value {
             String($v1), String($v2)            -> v1 == v2
             NativeFunc($v1), NativeFunc($v2)    -> v1 == v2
             NativeFunc2($v1), NativeFunc2($v2)  -> @assert(false)
-            Type($v1), Type($v2)                -> v1 == v2
+            Type($v1), Type($v2)                -> ^*v1 == ^*v2
             Module($v1), Module($v2)            -> v1 == v2
             _ -> false
         }
