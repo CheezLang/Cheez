@@ -9,7 +9,6 @@ use import std.ring_queue
 use import std.string
 use import std.thread
 
-
 if const @is_os("windows") {
     use import std.os.windows
     use import std.os.windows_constants
@@ -26,7 +25,9 @@ util :: import std.util
 use import dap.debug_adapter
 use import json.json
 use import logging.logger
+use import clap.clap
 
+use import config
 use import ast
 use import ast_dumper
 use import bytecode_generator
@@ -348,6 +349,7 @@ CheezDebugAdapter :: struct CommandHandler {
     text_provider   : ^TextProvider = null
 
     compiler        := Rc[Compiler].empty()
+    original_file   := String.empty()
 }
 
 impl CheezDebugAdapter {
@@ -400,6 +402,7 @@ impl CheezDebugAdapter {
     }
 
     compile_cheez_program :: (&mut Self, path: string) {
+        self.original_file = path.to_owned()
         compiler = Compiler.new(1, ^*self)
         main_workspace := compiler.get_mut().get_main_workspace()
 
@@ -484,6 +487,16 @@ impl DebuggerCallbacks for CheezDebugAdapter {
     }
 }
 
+DebugAdapterArguments :: struct {
+    debug_interpreter := false
+    debug_jobs        := false
+    debug_parser      := false
+    debug_wait        := false
+    dump_ast          := false
+    print_ast         := false
+    print_typed_ast   := false
+}
+
 impl CommandHandler for CheezDebugAdapter {
     initialize :: (&Self) -> Result[(), String] {
         adapter.emit_initialized_event()
@@ -498,6 +511,20 @@ impl CommandHandler for CheezDebugAdapter {
             self.compile_cheez_program(arguments.program.slice())
         } else {
             return Err(fmt.format("Can't debug the file '{}'", [arguments.program.slice()]))
+        }
+
+        args := parse_arguments(DebugAdapterArguments, arguments.arguments.slice())
+
+        if args != null {
+            g_logger.log("args: {}", [&*args])
+
+            DEBUG_INTERPRETER = args.debug_interpreter
+            DEBUG_JOBS        = args.debug_jobs
+            DEBUG_PARSER      = args.debug_parser
+            DEBUG_WAIT        = args.debug_wait
+            DUMP_AST          = args.dump_ast
+            PRINT_AST         = args.print_ast
+            PRINT_TYPED_AST   = args.print_typed_ast
         }
 
         debugger.get_mut().launch()
@@ -619,6 +646,71 @@ impl CommandHandler for CheezDebugAdapter {
         }
 
         return Ok(variables)
+    }
+
+    evaluate :: (&Self, arguments: DapReqEvaluate) -> Result[DapResEvaluate, String] {
+        match arguments.frame_id {
+            Some($id) -> {
+                return Err(fmt.format("evaluate({}) with frame not implemented yet", [arguments]))
+            }
+
+            None -> {
+                g_logger.log("evaluate() 1")
+                compiler := self.compiler.get_mut()
+
+                g_logger.log("evaluate() 2: acquire lock")
+                compiler.lock()
+
+                workspace := compiler.get_main_workspace()
+
+                mut scope : ^mut Scope = match workspace.get().get_file(self.original_file.slice()) {
+                    Some($file) -> file.global_scope
+                    None        -> null
+                }
+
+                g_logger.log("evaluate() 3: create lexer and parser")
+                mut lexer := Lexer.from_string(arguments.expression.slice(), &workspace.get().string_database)
+                lexer.get_mut().repl_mode = true
+                mut parser := Parser.new(lexer.get_mut(), workspace.get().error_handler, workspace.get().ast_allocator, workspace.get().next_ast_id)
+                workspace.get_mut().next_ast_id += 0xFFFFFFFF // ?
+
+                if scope == null {
+                    g_logger.log("evaluate() 4: create scope")
+                    scope = workspace.get_mut().new_scope()
+                    workspace.get_mut().define_builtin_types(&*scope)
+                    scope.mutex = Some(Mutex.new())
+                }
+
+                g_logger.log("evaluate() 5: parse code")
+                node := parser.parse_node()
+                if node == null {
+                    return Err(fmt.format("Failed to parse expression"))
+                }
+
+                g_logger.log("evaluate() 6: create and add jobs")
+                node.scope = scope
+                workspace.get_mut().create_and_add_job(CompileGlobalNodeJob.new(node))
+                workspace.get_mut().create_and_add_job(EvaluateNodeJob.new(&*node))
+
+                g_logger.log("evaluate() 7: flush and wait idle")
+                compiler.release()
+                compiler.flush_waiting_fibers()
+                compiler.wait_idle()
+
+                g_logger.log("evaluate() 8: waiting done")
+                if node.typ == null {
+                    g_logger.log("evaluate() 9: error")
+                    return Err(fmt.format("Failed to compile expression (typ was null)"))
+                }
+
+                g_logger.log("evaluate() 9: value computed")
+                return Ok(DapResEvaluate(
+                    result  = fmt.format("{}", [node.value])
+                    typ     = Some(fmt.format("{}", [node.typ]))
+                ))
+            }
+        }
+        return Err(fmt.format("evaluate({}) not implemented yet", [arguments]))
     }
 
     pause :: (&Self) -> Result[(), String] {
