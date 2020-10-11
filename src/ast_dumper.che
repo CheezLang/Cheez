@@ -119,6 +119,10 @@ dump_ast_helper :: (result: &mut String, node: &AstNode, recurse: bool, indent: 
                 if decl.type_expr != null then
                     dump_ast_helper(result, &*decl.type_expr, recurse, indent + 1)
                 dump_ast_helper(result, decl.value_expr, recurse, indent + 1)
+                if decl.docs.get_length() > 0 {
+                    print("", indent + 1)
+                    fmt.format_into(result, "Documentation: '{}'", [decl.docs.slice()])
+                }
             }
         }
 
@@ -139,6 +143,10 @@ dump_ast_helper :: (result: &mut String, node: &AstNode, recurse: bool, indent: 
                     dump_ast_helper(result, &*decl.type_expr, recurse, indent + 1)
                 if decl.value_expr != null then
                     dump_ast_helper(result, &*decl.value_expr, recurse, indent + 1)
+                if decl.docs.get_length() > 0 {
+                    print("", indent + 1)
+                    fmt.format_into(result, "Documentation: '{}'", [decl.docs.slice()])
+                }
             }
         }
 

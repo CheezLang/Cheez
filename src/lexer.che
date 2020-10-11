@@ -1,6 +1,3 @@
-use import string_database
-use import error_handler
-
 use import std.string
 use import std.unicode
 use import std.printable
@@ -13,6 +10,11 @@ use import std.thread
 C  :: import std.c
 io :: import std.io
 mem :: import std.mem.allocator
+
+use import logging.logger
+
+use import string_database
+use import error_handler
 
 #export_scope
 
@@ -256,7 +258,7 @@ impl Lexer {
     }
 
     advance :: (&mut Self) {
-        skip_newlines_and_comments()
+        skip_whitespace_and_comments()
 
         // if self.do_stack.count() > 0 and self.do_stack.peek_last().line == location.line {
         //     self.do_stack.pop()
@@ -282,7 +284,7 @@ impl Lexer {
         match curr {
             '<' -> {
                 next, next_len := {
-                    x := try_with(peek_char(1), (char(0), i32(0)))
+                    x := try_with(peek_char(1), (char(0), 0))
                     x[0], int(x[1])
                 }
                 match next {
@@ -294,7 +296,7 @@ impl Lexer {
             }
             '>' -> {
                 next, next_len := {
-                    x := try_with(peek_char(1), (char(0), i32(0)))
+                    x := try_with(peek_char(1), (char(0), 0))
                     x[0], int(x[1])
                 }
                 match next {
@@ -304,7 +306,7 @@ impl Lexer {
             }
             '=' -> {
                 next, next_len := {
-                    x := try_with(peek_char(1), (char(0), i32(0)))
+                    x := try_with(peek_char(1), (char(0), 0))
                     x[0], int(x[1])
                 }
                 match next {
@@ -315,7 +317,7 @@ impl Lexer {
             }
             '!' -> {
                 next, next_len := {
-                    x := try_with(peek_char(1), (char(0), i32(0)))
+                    x := try_with(peek_char(1), (char(0), 0))
                     x[0], int(x[1])
                 }
                 match next {
@@ -325,7 +327,7 @@ impl Lexer {
             }
             '+' -> {
                 next, next_len := {
-                    x := try_with(peek_char(1), (char(0), i32(0)))
+                    x := try_with(peek_char(1), (char(0), 0))
                     x[0], int(x[1])
                 }
                 match next {
@@ -335,7 +337,7 @@ impl Lexer {
             }
             '-' -> {
                 next, next_len := {
-                    x := try_with(peek_char(1), (char(0), i32(0)))
+                    x := try_with(peek_char(1), (char(0), 0))
                     x[0], int(x[1])
                 }
                 match next {
@@ -346,7 +348,7 @@ impl Lexer {
             }
             '*' -> {
                 next, next_len := {
-                    x := try_with(peek_char(1), (char(0), i32(0)))
+                    x := try_with(peek_char(1), (char(0), 0))
                     x[0], int(x[1])
                 }
                 match next {
@@ -356,7 +358,7 @@ impl Lexer {
             }
             '/' -> {
                 next, next_len := {
-                    x := try_with(peek_char(1), (char(0), i32(0)))
+                    x := try_with(peek_char(1), (char(0), 0))
                     x[0], int(x[1])
                 }
                 match next {
@@ -366,7 +368,7 @@ impl Lexer {
             }
             '%' -> {
                 next, next_len := {
-                    x := try_with(peek_char(1), (char(0), i32(0)))
+                    x := try_with(peek_char(1), (char(0), 0))
                     x[0], int(x[1])
                 }
                 match next {
@@ -376,13 +378,13 @@ impl Lexer {
             }
             '.' -> {
                 next, next_len := {
-                    x := try_with(peek_char(1), (char(0), i32(0)))
+                    x := try_with(peek_char(1), (char(0), 0))
                     x[0], int(x[1])
                 }
                 match next {
                     '.' -> {
                         next2, next_len2 := {
-                            x := try_with(peek_char(2), (char(0), i32(0)))
+                            x := try_with(peek_char(2), (char(0), 0))
                             x[0], int(x[1])
                         }
                         match next2 {
@@ -528,7 +530,7 @@ impl Lexer {
                         state = B
                     }
                     '.' -> {
-                        next, _ := try_with(peek_char(1), (char(0), i32(0)))
+                        next, _ := try_with(peek_char(1), (char(0), 0))
                         if next == '.' {
                             state = Done
                         } else {
@@ -550,7 +552,7 @@ impl Lexer {
 
                 DecDigit -> match c {
                     '.' -> {
-                        next, _ := try_with(peek_char(1), (char(0), i32(0)))
+                        next, _ := try_with(peek_char(1), (char(0), 0))
                         if next == '.' {
                             state = Done
                         } else {
@@ -779,20 +781,33 @@ impl Lexer {
         token.data = TokenData.String(string_db.intern(str))
     }
 
-    skip_newlines_and_comments :: (&mut Self) {
+    skip_whitespace_and_comments :: (&mut Self) {
         loop {
             curr, curr_len := try_with(peek_char(0), break)
 
             match curr {
                 '/' -> {
-                    next, next_len := try_with(peek_char(1), (char(0), i32(0)))
+                    next, next_len := try_with(peek_char(1), (char(0), 0))
                     match next {
                         '*' -> {
-                            parse_multi_line_comment()
+                            self.parse_multi_line_comment()
                             continue
                         }
                         '/' -> {
-                            parse_single_line_comment()
+                            if next := self.check_char(2, '/'), next.ok {
+                                // doc comment
+                                if next := self.check_char(3, '*'), next.ok {
+                                    // multiline
+                                    self.create_block_ends_if_necessary()
+                                    self.parse_multi_line_doc_comment()
+                                } else {
+                                    // single line
+                                    self.create_block_ends_if_necessary()
+                                    self.parse_single_line_doc_comment()
+                                }
+                            } else {
+                                self.parse_single_line_comment()
+                            }
                             continue
                         }
 
@@ -818,56 +833,59 @@ impl Lexer {
             }
 
             // non-whitespace character
-
-            if do_stack.count() > 0 and do_stack.peek_last().line == self.location.line {
-                // 'do' is followed by character which is not a newline, so don't do any indentation based block stuff
-                @assert(self.new_indent == self.indent)
-                do_stack.pop()
-            } else if self.new_indent == -1 {
-                // first character in this line
-                // handle indentation based block ending
-
-                self.new_indent = (self.location.column - 1) / 4
-
-                if do_stack.count() > 0 and do_stack.peek_last().indent == self.indent and self.new_indent <= self.indent {
-                    self.enqueue_token(Token(
-                        typ      = .Error
-                        location = self.location
-                        data     = .String("Missing indentation")
-                    ))
-                    self.enqueue_token(Token(
-                        typ      = .OpenBrace
-                        location = self.location
-                    ))
-                    self.enqueue_token(Token(
-                        typ      = .ClosingBrace
-                        location = self.location
-                    ))
-                    do_stack.pop()
-                } else {
-                    while self.indent > self.new_indent {
-                        self.indent -= 1
-                        if do_stack.count() > 0 and do_stack.peek_last().indent == self.indent {
-                            self.enqueue_token(Token(
-                                typ      = .ClosingBrace
-                                location = self.last_token_location.end()
-                            ))
-                            self.enqueue_token(Token(
-                                typ      = .NewLine
-                                location = self.last_token_location.end()
-                            ))
-                            do_stack.pop()
-                        }
-                    }
-                }
-
-                self.indent = self.new_indent
-            }
+            self.create_block_ends_if_necessary()
             break
         }
     }
 
-    peek_char :: (&Self, mut offset: int) -> Option[(char, i32)] {
+    create_block_ends_if_necessary :: (&mut Self) {
+        if do_stack.count() > 0 and do_stack.peek_last().line == self.location.line {
+            // 'do' is followed by character which is not a newline, so don't do any indentation based block stuff
+            @assert(self.new_indent == self.indent)
+            do_stack.pop()
+        } else if self.new_indent == -1 {
+            // first character in this line
+            // handle indentation based block ending
+
+            self.new_indent = (self.location.column - 1) / 4
+
+            if do_stack.count() > 0 and do_stack.peek_last().indent == self.indent and self.new_indent <= self.indent {
+                self.enqueue_token(Token(
+                    typ      = .Error
+                    location = self.location
+                    data     = .String("Missing indentation")
+                ))
+                self.enqueue_token(Token(
+                    typ      = .OpenBrace
+                    location = self.location
+                ))
+                self.enqueue_token(Token(
+                    typ      = .ClosingBrace
+                    location = self.location
+                ))
+                do_stack.pop()
+            } else {
+                while self.indent > self.new_indent {
+                    self.indent -= 1
+                    if do_stack.count() > 0 and do_stack.peek_last().indent == self.indent {
+                        self.enqueue_token(Token(
+                            typ      = .ClosingBrace
+                            location = self.last_token_location.end()
+                        ))
+                        self.enqueue_token(Token(
+                            typ      = .NewLine
+                            location = self.last_token_location.end()
+                        ))
+                        do_stack.pop()
+                    }
+                }
+            }
+
+            self.indent = self.new_indent
+        }
+    }
+
+    peek_char :: (&Self, mut offset: int) -> Option[(c: char, len: int)] {
         mut index := self.location.byte_index - self.offset
         while offset > 0, offset -= 1 {
             if index >= self.text.get_length() {
@@ -893,15 +911,34 @@ impl Lexer {
         if index >= self.text.get_length() {
             return None
         }
+        result := Utf8.decode(self.text.slice().bytes[index..])
+        return Some((result[0], int(result[1])))
+    }
 
-        return Some(Utf8.decode(self.text.slice().bytes[index..]))
+    check_char :: (&Self, offset: int, expected: char) -> (ok: bool, len: int) {
+        return match self.peek_char(offset) {
+            None     -> (false, 0)
+            Some($c) -> (c.c == expected, int(c.len))
+        }
+    }
+
+    parse_single_line_comment :: (&mut Self) {
+        loop {
+            next, len := try_with(peek_char(0), break)
+            if next == '`n' {
+                break
+            }
+
+            self.location.byte_index += int(len)
+            self.location.column += 1
+        }
     }
 
     parse_multi_line_comment :: (&mut Self) {
         mut level := 0
         loop {
             curr, curr_len := try_with(peek_char(0), break)
-            next, next_len := try_with(peek_char(1), (char(0), i32(0)))
+            next, next_len := try_with(peek_char(1), (char(0), 0))
 
             if curr == '/' and next == '*' {
                 self.location.byte_index += int(next_len)
@@ -925,7 +962,14 @@ impl Lexer {
         }
     }
 
-    parse_single_line_comment :: (&mut Self) {
+    parse_single_line_doc_comment :: (&mut Self) {
+        location := self.location
+
+        self.location.byte_index += 3
+        self.location.column += 3
+
+        start_index := self.location.byte_index + 1
+
         loop {
             next, len := try_with(peek_char(0), break)
             if next == '`n' {
@@ -935,6 +979,96 @@ impl Lexer {
             self.location.byte_index += int(len)
             self.location.column += 1
         }
+
+        end_index := self.location.byte_index + 1
+        comment_text := self.text.slice()[start_index..end_index]
+        self.enqueue_token(Token(
+            typ         = .DocComment
+            location    = location
+            data        = .String(comment_text)
+        ))
+    }
+
+    parse_multi_line_doc_comment :: (&mut Self) {
+        location := self.location
+
+        self.location.byte_index += 3
+        self.location.column += 3
+
+        start_index := self.location.byte_index + 1
+
+        mut level := 0
+        loop {
+            curr := try_with(peek_char(0), break)
+            self.location.byte_index += int(curr.len)
+            self.location.column += 1
+
+            match curr.c {
+                '/' -> {
+                    next := try_with(peek_char(0), (char(0), 0))
+
+                    match next.c {
+                        '/' -> if next2 := self.check_char(1, '*'), next2.ok {
+                            if next3 := self.check_char(2, '/'), next3.ok {
+                                // end of doc comment
+                                self.location.byte_index += next.len + next2.len + next3.len
+                                self.location.column += 3
+                                if level > 0 {
+                                    self.enqueue_token(Token(
+                                        location    = self.location
+                                        typ         = .Error
+                                        data        = .String("Nested block comments in doc comment not closed")
+                                    ))
+                                }
+                                break
+                            }
+                        } else {}
+
+                        '*' -> {
+                            self.location.byte_index += int(next.len)
+                            self.location.column += 1
+                            level += 1
+                        }
+
+                        _ -> {}
+                    }
+                }
+
+                '*' -> {
+                    if next := self.check_char(0, '/'), next.ok {
+                        self.location.byte_index += int(next.len)
+                        self.location.column += 1
+                        level -= 1
+                        if level < 0 {
+                            self.enqueue_token(Token(
+                                location    = self.location
+                                typ         = .Error
+                                data        = .String("Nested block comment in doc comment closed to often")
+                            ))
+                        }
+                    }
+                }
+
+                '`n' -> {
+                    self.location.line += 1
+                    self.location.column = 1
+                }
+
+                _ -> {}
+            }
+        }
+
+        mut end_index := self.location.byte_index - 4
+        while end_index > start_index and self.text.char_at(end_index) != '`n' {
+            end_index -= 1
+        }
+
+        comment_text := self.text.slice()[start_index..end_index]
+        self.enqueue_token(Token(
+            location    = location
+            typ         = .DocComment
+            data        = .String(comment_text)
+        ))
     }
 
     check_keywords :: (&Self, token: &mut Token) {
@@ -1088,6 +1222,7 @@ impl Printable for TokenType {
             Unknown           -> "Unknown"
             NewLine           -> "NewLine"
             EOF               -> "EOF"
+            DocComment        -> "DocComment"
             StringLiteral     -> "StringLiteral"
             CharLiteral       -> "CharLiteral"
             NumberLiteral     -> "NumberLiteral"
@@ -1166,6 +1301,7 @@ impl Printable for TokenType {
             KwImport          -> "KwImport"
             KwIn              -> "KwIn"
             KwIs              -> "KwIs"
+            _                 -> "NOT IMPLEMENTED: TokenType.print"
         }
     }
 }
@@ -1175,6 +1311,7 @@ TokenType :: enum #copy {
     Unknown
     NewLine
     EOF
+    DocComment
     StringLiteral
     CharLiteral
     NumberLiteral

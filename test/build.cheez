@@ -5,25 +5,23 @@ _ :: Main()
 Main :: () {
     mut foo := Foo(5)
     foo.func()
-
+    
     io.print_string("---")
-
-    mut bar := Bar[int, 4]([1, 2, 3, 4])
+    
+    mut bar := Bar[int, 4]([123, 456, 789, 9])
     bar.print()
 }
 
 Bar :: (T: type, N: int) struct {
-    pub TT :: T
-    pub NN :: N
     pub v : [N]T
 }
 
 impl Bar[int, 4] {
-    pub print :: (self: &Self) do
-        {}
+    pub print :: (self: &Self) {
         io.print_int(self.v[0])
         io.print_int(self.v[1])
         io.print_int(self.v[2])
+    }
 }
 
 Foo :: struct {
@@ -32,7 +30,6 @@ Foo :: struct {
 
 impl Foo {
     pub func :: (self: &Self) do
-        {}
         io.print_string("c()")
         io.print_int(self.v)
 }

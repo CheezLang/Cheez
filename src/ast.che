@@ -71,6 +71,8 @@ AstConstDecl :: struct AstNode {
     original_symbol := Option[Symbol].None
 
     var_type    : ^TypeInfo = null
+
+    docs        := String.empty()
 }
 impl AstNode for AstConstDecl {}
 
@@ -84,6 +86,8 @@ AstDecl :: struct AstNode {
 
     name        : string = "_"
     var_type    : ^TypeInfo = null
+
+    docs        := String.empty()
 }
 impl AstNode for AstDecl {}
 

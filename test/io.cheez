@@ -1,12 +1,16 @@
 pub NEW_LINE :: '`n'
 
+/// print a string to stdout
 pub print_string :: (str: string) do _println(str)
 
+/// print a bool to stdout
 pub print_bool :: (b: bool) do
     _println(if b then "true" else "false")
 
+/// print a char to stdout
 pub print_char :: (c: char) { _print_char(c) }
 
+/// print an int to stdout
 pub print_int :: (mut b: int) {
     print_rec :: (i: int) do
         print_digit :: (d: int) do

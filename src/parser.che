@@ -1,6 +1,7 @@
 use import std.array
 use import std.fiber
 use import std.unicode
+use import std.string
 
 mem :: import std.mem.allocator
 io  :: import std.io
@@ -22,6 +23,7 @@ Parser :: struct {
     lexer           : &mut Lexer
     error_handler   : ^mut ErrorHandler
     allocator       : ^mut mem.Allocator
+    current_docs    := String.empty()
 
     _next_id        := 1
 }
@@ -75,6 +77,44 @@ impl Parser {
     parse_expression :: (&Self, allow_comma: bool, allow_function: bool) -> ^mut AstNode {
         debug_log("> {}: {}", [@function_signature(), lexer.peek_token()])
         defer debug_log("< {}: {}", [@function_signature(), lexer.peek_token()])
+
+        // check for doc comment
+        if check_token(.DocComment) {
+            while check_token(.DocComment) {
+                doc_comment := lexer.next_token()
+                indent := doc_comment.location.column - 1
+                text := doc_comment.data.get_string()
+
+                for line in text.lines() {
+                    if it_index > 0 then self.current_docs.append_char('`n')
+                    mut line := line
+                    for 0 .. indent {
+                        if line.bytes.length == 0 or char(*line[0]) != ' ' then break
+                        line = line[1..]
+                    }
+                    self.current_docs.append_string(line)
+
+                }
+
+                self.skip_whitespace()
+            }
+            defer self.current_docs.clear()
+
+            // doc comments can only be followed by declarations
+            if check_token(.KwPub) {
+                lexer.next_token()
+                mutable := if check_token(.KwMut) {
+                    lexer.next_token()
+                    true
+                } else false
+                return parse_declaration(public=true, mutable=mutable, allow_comma=allow_comma, allow_function=allow_function, docs=self.current_docs.slice())
+            } else if check_token(.KwMut) {
+                lexer.next_token()
+                return parse_declaration(public=false, mutable=true, allow_comma=allow_comma, allow_function=allow_function, docs=self.current_docs.slice())
+            } else {
+                return parse_declaration(public=false, mutable=false, allow_comma=allow_comma, allow_function=allow_function, docs=self.current_docs.slice())
+            }
+        }
 
         if check_token(.KwPub) {
             lexer.next_token()
@@ -151,7 +191,7 @@ impl Parser {
         return expr
     }
 
-    parse_declaration :: (&Self, public: bool, mutable: bool, allow_comma: bool, allow_function: bool) -> ^mut AstNode {
+    parse_declaration :: (&Self, public: bool, mutable: bool, allow_comma: bool, allow_function: bool, docs: string = "") -> ^mut AstNode {
         debug_log("> {}: {}", [@function_signature(), lexer.peek_token()])
         defer debug_log("< {}: {}", [@function_signature(), lexer.peek_token()])
 
@@ -179,6 +219,7 @@ impl Parser {
                 value_expr  = value_expr
                 public      = public
                 mutable     = mutable
+                docs        = docs.to_owned()
             ))
         } else if check_token(.Colon) {
             lexer.next_token()
@@ -196,6 +237,7 @@ impl Parser {
                 type_expr   = type_expr
                 value_expr  = &*value_expr
                 public      = public
+                docs        = docs.to_owned()
             ))
         } else {
             return allocate(AstDecl(
@@ -206,9 +248,10 @@ impl Parser {
                 value_expr  = null
                 public      = public
                 mutable     = mutable
+                docs        = docs.to_owned()
             ))
         }
-        
+
         return pattern
     }
 

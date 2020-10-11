@@ -121,6 +121,11 @@ pretty_print_ast_helper :: (result: &mut String, node: &AstNode) {
         }
 
         AstConstDecl($decl) -> {
+            if decl.docs.get_length() > 0 {
+                for line in decl.docs.slice().lines() {
+                    fmt.format_into(result, "/// {}`n", [line])
+                }
+            }
             pretty_print_ast_helper(result, decl.pattern)
             result += " :"
             if decl.type_expr != null then {
@@ -133,6 +138,11 @@ pretty_print_ast_helper :: (result: &mut String, node: &AstNode) {
         }
 
         AstDecl($decl) -> {
+            if decl.docs.get_length() > 0 {
+                for line in decl.docs.slice().lines() {
+                    fmt.format_into(result, "/// {}`n", [line])
+                }
+            }
             if decl.mutable {
                 result += "mut "
             }
@@ -469,7 +479,11 @@ pretty_print_typed_ast_helper :: (result: &mut String, node: &AstNode) {
         }
 
         AstConstDecl($decl) -> {
-            // g_logger.log("pretty_print_typed_ast_helper AstConstDecl")
+            if decl.docs.get_length() > 0 {
+                for line in decl.docs.slice().lines() {
+                    fmt.format_into(result, "/// {}`n", [line])
+                }
+            }
             pretty_print_typed_ast_helper(result, decl.pattern)
 
             fmt.format_into(result, " : {} : ", [decl.var_type])
@@ -483,6 +497,11 @@ pretty_print_typed_ast_helper :: (result: &mut String, node: &AstNode) {
         }
 
         AstDecl($decl) -> {
+            if decl.docs.get_length() > 0 {
+                for line in decl.docs.slice().lines() {
+                    fmt.format_into(result, "/// {}`n", [line])
+                }
+            }
             if decl.mutable {
                 result += "mut "
             }
