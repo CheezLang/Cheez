@@ -77,7 +77,6 @@ impl CodeGenerator for ByteCodeGenerator {
         cbc_func := self.allocate_function(func.name, file_path)
         builder.begin_function(cbc_func)
 
-
         mut slot_index := 0
         for(reverse=true) param in &func.params {
             slot_index -= slots_for_size(param.var_type.size)
@@ -93,6 +92,33 @@ impl CodeGenerator for ByteCodeGenerator {
         builder.end_function()
 
         func.bytecode = cbc_func
+    }
+
+    init_with_function :: (&mut Self, func: &CBCFunction) {
+        for &local in func.debug_info.locals.slice() {
+            variables.set(local.id, local.index)
+        }
+
+        for &local in func.debug_info.params.slice() {
+            variables.set(local.id, local.index)
+        }
+    }
+
+    generate_code_for_expression_in_stack_frame :: (&mut Self, func: &mut AstFunction, node: &AstNode) -> ^mut CBCFunction {
+        file_path := node.location.file
+        cbc_func := self.allocate_function("$expr", file_path)
+        builder.begin_function(cbc_func)
+
+        mut slot_index := 0
+        for(reverse=true) param in func.params.slice() {
+            slot_index -= slots_for_size(param.var_type.size)
+            variables.set(param.id, slot_index)
+        }
+
+        generate_expression(node)
+        builder.build_halt()
+        builder.end_function()
+        return cbc_func
     }
 
     generate_code_for_expression :: (&mut Self, node: &AstNode) -> ^mut CBCFunction {

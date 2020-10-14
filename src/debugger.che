@@ -199,6 +199,7 @@ impl Debugger {
 
 impl CodeRunner for Debugger {
     run :: (&mut Self, interp: &mut Interpreter) -> InterpStepResult {
+        g_logger.log("Debugger.run()")
         self.current_interp = interp
 
         self.store_old_state()
@@ -650,15 +651,107 @@ impl CommandHandler for CheezDebugAdapter {
 
     evaluate :: (&Self, arguments: DapReqEvaluate) -> Result[DapResEvaluate, String] {
         match arguments.frame_id {
-            Some($id) -> {
-                return Err(fmt.format("evaluate({}) with frame not implemented yet", [arguments]))
+            Some($frame_id) -> {
+                g_logger.log("evaluate 1")
+                compiler := self.compiler.get_mut()
+                compiler.lock()
+                workspace_rc := compiler.get_main_workspace()
+                workspace := workspace_rc.get_mut()
+
+                g_logger.log("evaluate 2")
+                mut lexer := Lexer.from_string(arguments.expression.slice(), &workspace.string_database)
+                lexer.get_mut().repl_mode = true
+                mut parser := Parser.new(lexer.get_mut(), workspace.error_handler, workspace.ast_allocator, workspace.next_ast_id)
+                workspace.next_ast_id += 0xFFFFFFFF // ?
+
+                g_logger.log("evaluate 3")
+                node := parser.parse_node()
+                if node == null {
+                    return Err(fmt.format("Failed to parse expression"))
+                }
+
+                g_logger.log("evaluate 4")
+                if self.debugger.get().current_interp == null {
+                    return Err(fmt.format("No current interpreter found"))
+                }
+                current_interp := self.debugger.get().current_interp
+                frames := current_interp.get_stackframes()
+                if frame_id < 0 or frame_id >= frames.length {
+                    return Err(fmt.format("Frame index out of bounds: frameId = {}, {} frames", [frame_id, frames.length]))
+                }
+                current_frame := frames[frame_id]
+                if current_frame.func == null or current_frame.func.ast_function == null {
+                    return Err(fmt.format("No debug information for frame {}", [frame_id]))
+                }
+                ast_function := current_frame.func.ast_function
+                if ast_function.body == null {
+                    return Err(fmt.format("No body in current function"))
+                }
+                g_logger.log("evaluate 5")
+
+                match ast_function.body {
+                    AstBlock($block) -> {
+                        node.scope = block.sub_scope
+                    }
+                    _ -> {
+                        return Err(fmt.format("Current function has no block a body"))
+                    }
+                }
+                code_runner := Rc[CodeRunner].new(DefaultCodeRunner())
+
+                prev_code_runner := compiler.code_runner.clone()
+                compiler.code_runner = code_runner.clone()
+                defer compiler.code_runner = prev_code_runner
+
+                g_logger.log("evaluate 6")
+                // @todo: change code runner of compiler so it doesn't use the debugger
+                workspace.create_and_add_job(CompileGlobalNodeJob.new(node))
+                compiler.release()
+                compiler.flush_waiting_fibers()
+                g_logger.log("evaluate 7")
+                compiler.wait_idle()
+                g_logger.log("evaluate 8")
+
+                if node.typ == null {
+                    return Err(fmt.format("Failed to compile expression (typ was null)"))
+                }
+                {
+                    g_logger.log("evaluate 9")
+                    // generate bytecode and execute it in current frame
+                    code_gen := ByteCodeGenerator.new(&workspace.string_database, &*workspace.error_handler, workspace.bc_allocator)
+                    code_gen.get_mut().init_with_function(&*current_frame.func)
+                    code := code_gen.get_mut().generate_code_for_expression(&*node)
+                    current_interp.push_anonymous_frame(code)
+                    defer current_interp.pop_frame()
+
+                    g_logger.log("evaluate 10")
+                    match code_runner.get_mut().run(&*current_interp) {
+                        .Error($msg) -> {
+                            mut stacktrace := String.empty()
+                            current_interp.write_stacktrace(&mut stacktrace, workspace.get_compiler())
+                            frame := current_interp.top_frame()
+                            location := frame.func.debug_info.get_location_for_ip(frame.ip)
+                            workspace.error_handler.report_error_at(location, "{}", [msg], details = [("Stacktrace:`n{}", [stacktrace.slice()])])
+                        }
+
+                        .Done -> {
+                            frame := current_interp.top_frame()
+
+                            value := Any.from_pointers(cast(^void) frame.stack.data, node.typ)
+                            io.formatln("{}: {}", [value, node.typ])
+                        }
+                    }
+                }
+
+                return Ok(DapResEvaluate(
+                    result  = fmt.format("{}", [node.value])
+                    typ     = Some(fmt.format("{}", [node.typ]))
+                ))
             }
 
             None -> {
-                g_logger.log("evaluate() 1")
                 compiler := self.compiler.get_mut()
 
-                g_logger.log("evaluate() 2: acquire lock")
                 compiler.lock()
 
                 workspace := compiler.get_main_workspace()
@@ -668,42 +761,34 @@ impl CommandHandler for CheezDebugAdapter {
                     None        -> null
                 }
 
-                g_logger.log("evaluate() 3: create lexer and parser")
                 mut lexer := Lexer.from_string(arguments.expression.slice(), &workspace.get().string_database)
                 lexer.get_mut().repl_mode = true
                 mut parser := Parser.new(lexer.get_mut(), workspace.get().error_handler, workspace.get().ast_allocator, workspace.get().next_ast_id)
                 workspace.get_mut().next_ast_id += 0xFFFFFFFF // ?
 
                 if scope == null {
-                    g_logger.log("evaluate() 4: create scope")
                     scope = workspace.get_mut().new_scope()
                     workspace.get_mut().define_builtin_types(&*scope)
                     scope.mutex = Some(Mutex.new())
                 }
 
-                g_logger.log("evaluate() 5: parse code")
                 node := parser.parse_node()
                 if node == null {
                     return Err(fmt.format("Failed to parse expression"))
                 }
 
-                g_logger.log("evaluate() 6: create and add jobs")
                 node.scope = scope
                 workspace.get_mut().create_and_add_job(CompileGlobalNodeJob.new(node))
                 workspace.get_mut().create_and_add_job(EvaluateNodeJob.new(&*node))
 
-                g_logger.log("evaluate() 7: flush and wait idle")
                 compiler.release()
                 compiler.flush_waiting_fibers()
                 compiler.wait_idle()
 
-                g_logger.log("evaluate() 8: waiting done")
                 if node.typ == null {
-                    g_logger.log("evaluate() 9: error")
                     return Err(fmt.format("Failed to compile expression (typ was null)"))
                 }
 
-                g_logger.log("evaluate() 9: value computed")
                 return Ok(DapResEvaluate(
                     result  = fmt.format("{}", [node.value])
                     typ     = Some(fmt.format("{}", [node.typ]))

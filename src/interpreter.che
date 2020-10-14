@@ -205,6 +205,80 @@ impl Interpreter {
         return push_frame(function.bytecode)
     }
 
+    push_anonymous_frame :: (&mut Self, func: ^mut CBCFunction) -> bool {
+        if fp + 1 >= frames.length {
+            frame := frames[fp]
+            location := frame.func.debug_info.get_location_for_ip(frame.ip_prev)
+            g_logger.log("[INTERP] {}:{}:{}: StackOverflow at (fp={}, sp={}, ip={}) {}           {}", [
+                frame.func.debug_info.path.slice()
+                location.line
+                location.column
+                fp
+                frame.sp
+                frame.ip_prev
+                Instruction.pretty_print(frame.code[frame.ip_prev..])
+                frame.dump_stack()
+            ], "stdout")
+            return false
+        }
+
+        if sp + func.local_slots >= stack.length {
+            frame := frames[fp]
+            location := frame.func.debug_info.get_location_for_ip(frame.ip_prev)
+            g_logger.log("[INTERP] {}:{}:{}: StackOverflow at (fp={}, sp={}, ip={}, required={}) {}           {}", [
+                frame.func.debug_info.path.slice()
+                location.line
+                location.column
+                fp
+                frame.sp
+                frame.ip_prev
+                sp + func.local_slots
+                Instruction.pretty_print(frame.code[frame.ip_prev..])
+                frame.dump_stack()
+            ], "stdout")
+            return false
+        }
+
+        _fp := fp
+        fp += 1
+
+        if sp - func.parameter_slots < 0 {
+            g_logger.log("[INTERP] Trying to call function with {} arguments but not enough arguments are on the stack (sp = {})", [func.parameter_slots, sp])
+            // frame := &frames[fp]
+            // g_logger.log("[INTERP] {}:{}:{}: Trying to call function with {} arguments but not enough arguments are on the stack at (fp={}, sp={}, ip={}) {}           {}", [
+            //     func.parameter_slots
+            //     frame.func.debug_info.path.slice()
+            //     location.line
+            //     location.column
+            //     fp
+            //     frame.sp
+            //     frame.ip_prev
+            //     Instruction.pretty_print(frame.code[frame.ip_prev..])
+            //     frame.dump_stack()
+            // ], "stdout")
+            return false
+        }
+
+        prev := frames[fp - 1]
+
+        *frames[fp] = StackFrame(
+            ip                  = 0
+            sp                  = prev.sp
+            bp                  = prev.bp
+            code                = func.instructions.slice_mut()
+            stack               = prev.stack
+            func                = func
+            return_value_slots  = 0
+            parameter_indices   = func.parameter_indices.slice_mut()
+        )
+
+        if const DEBUG_ENABLED { if DEBUG_INTERPRETER {
+            g_logger.log("push_frame {} (fp = {} -> {}, local_slots = {})", [func.parameter_slots, _fp, fp, func.local_slots])
+        }}
+
+        return true
+    }
+
     push_frame :: (&mut Self, func: ^mut CBCFunction) -> bool {
         if fp + 1 >= frames.length {
             frame := frames[fp]

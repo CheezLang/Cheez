@@ -75,7 +75,7 @@ wait_until :: (cond: Code, on_error: Code, on_yield: Code = {}, on_resume: Code 
     fiber_context.job.progressed = true
 }
 
-compile_files :: (files: []String, thread_count: int) {
+compile_function :: (files: []String, thread_count: int) {
     console_error_handler := ConsoleErrorHandler.new(null)
 
     g_logger.log("compile files: {}", [files])
