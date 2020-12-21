@@ -7,7 +7,7 @@
             "type": "cheez",
             "request": "launch",
             "program": "${file}",
-            "args": [],
+            "args": ["-debug_jobs", "-debug_wait", "-debug_interpreter"],
             "internalConsoleOptions": "openOnSessionStart"
         }
     ]
